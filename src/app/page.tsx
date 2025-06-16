@@ -1,103 +1,217 @@
-import Image from "next/image";
+"use client";
+import React, { useState } from "react";
+
+interface Format {
+  format_id: string;
+  ext: string;
+  resolution: string;
+  fps: string;
+  type: string;
+  note: string;
+}
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [url, setUrl] = useState("");
+  const [formats, setFormats] = useState<Format[]>([]);
+  const [title, setTitle] = useState("");
+  const [selectedFormats, setSelectedFormats] = useState<string[]>([]);
+  const [downloadedFiles, setDownloadedFiles] = useState<string[]>([]);
+  const [mergePaths, setMergePaths] = useState({ video: "", audio: "", output: "" });
+  const [status, setStatus] = useState<string>("");
+  const [error, setError] = useState<string>("");
+  const [loading, setLoading] = useState(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+  const fetchFormats = async () => {
+    setLoading(true);
+    setError("");
+    setFormats([]);
+    setDownloadedFiles([]);
+    setSelectedFormats([]);
+    setStatus("");
+    try {
+      const res = await fetch("http://127.0.0.1:8000/list_formats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (!res.ok) throw new Error("Failed to fetch formats");
+      const data = await res.json();
+      setFormats(data.formats);
+      setTitle(data.title);
+    } catch (e: any) {
+      setError(e.message || "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFormatSelect = (fid: string) => {
+    setSelectedFormats((prev) =>
+      prev.includes(fid) ? prev.filter((f) => f !== fid) : [...prev, fid]
+    );
+  };
+
+  const downloadSelected = async () => {
+    setLoading(true);
+    setError("");
+    setStatus("");
+    setDownloadedFiles([]);
+    try {
+      const res = await fetch("http://127.0.0.1:8000/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, format_ids: selectedFormats }),
+      });
+      if (!res.ok) throw new Error("Download failed");
+      const data = await res.json();
+      setDownloadedFiles(data.files);
+      setStatus("Download complete!");
+      if (data.files.length === 2) {
+        setMergePaths({ video: data.files[0], audio: data.files[1], output: "merged.mp4" });
+      }
+    } catch (e: any) {
+      setError(e.message || "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMerge = async () => {
+    setLoading(true);
+    setError("");
+    setStatus("");
+    try {
+      const res = await fetch("http://127.0.0.1:8000/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          video_path: mergePaths.video,
+          audio_path: mergePaths.audio,
+          output_path: mergePaths.output,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Merge failed");
+      setStatus(`Merge complete! Output: ${data.output}`);
+    } catch (e: any) {
+      setError(e.message || "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <main className="max-w-2xl mx-auto p-4">
+      <h1 className="text-2xl font-bold mb-4">YouTube Downloader</h1>
+      <div className="mb-4">
+        <input
+          className="border p-2 w-full rounded"
+          type="text"
+          placeholder="Enter YouTube URL"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+        <button
+          className="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          onClick={fetchFormats}
+          disabled={loading || !url}
+        >
+          {loading ? "Loading..." : "Fetch Formats"}
+        </button>
+      </div>
+      {error && <div className="text-red-600 mb-2">{error}</div>}
+      {formats.length > 0 && (
+        <div className="mb-4">
+          <h2 className="font-semibold mb-2">Available Formats for: {title}</h2>
+          <div className="overflow-x-auto">
+            <table className="min-w-full border text-sm">
+              <thead>
+                <tr>
+                  <th className="border px-2">Select</th>
+                  <th className="border px-2">Format ID</th>
+                  <th className="border px-2">Ext</th>
+                  <th className="border px-2">Res</th>
+                  <th className="border px-2">FPS</th>
+                  <th className="border px-2">Type</th>
+                  <th className="border px-2">Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {formats.map((f) => (
+                  <tr key={f.format_id}>
+                    <td className="border px-2 text-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedFormats.includes(f.format_id)}
+                        onChange={() => handleFormatSelect(f.format_id)}
+                      />
+                    </td>
+                    <td className="border px-2">{f.format_id}</td>
+                    <td className="border px-2">{f.ext}</td>
+                    <td className="border px-2">{f.resolution}</td>
+                    <td className="border px-2">{f.fps}</td>
+                    <td className="border px-2">{f.type}</td>
+                    <td className="border px-2">{f.note}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button
+            className="mt-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+            onClick={downloadSelected}
+            disabled={loading || selectedFormats.length === 0}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            {loading ? "Downloading..." : "Download Selected"}
+          </button>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+      )}
+      {downloadedFiles.length > 0 && (
+        <div className="mb-4">
+          <h2 className="font-semibold mb-2">Downloaded Files</h2>
+          <ul className="list-disc ml-6">
+            {downloadedFiles.map((f, i) => (
+              <li key={i}>{f}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {downloadedFiles.length === 2 && (
+        <div className="mb-4 border-t pt-4">
+          <h2 className="font-semibold mb-2">Merge Video & Audio</h2>
+          <div className="flex flex-col gap-2">
+            <input
+              className="border p-2 rounded"
+              type="text"
+              placeholder="Video file path"
+              value={mergePaths.video}
+              onChange={e => setMergePaths({ ...mergePaths, video: e.target.value })}
+            />
+            <input
+              className="border p-2 rounded"
+              type="text"
+              placeholder="Audio file path"
+              value={mergePaths.audio}
+              onChange={e => setMergePaths({ ...mergePaths, audio: e.target.value })}
+            />
+            <input
+              className="border p-2 rounded"
+              type="text"
+              placeholder="Output file name (e.g., merged.mp4)"
+              value={mergePaths.output}
+              onChange={e => setMergePaths({ ...mergePaths, output: e.target.value })}
+            />
+            <button
+              className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+              onClick={handleMerge}
+              disabled={loading || !mergePaths.video || !mergePaths.audio || !mergePaths.output}
+            >
+              {loading ? "Merging..." : "Merge"}
+            </button>
+          </div>
+        </div>
+      )}
+      {status && <div className="text-green-700 font-semibold mt-2">{status}</div>}
+    </main>
   );
 }
