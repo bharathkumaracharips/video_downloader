@@ -10,7 +10,16 @@ interface Format {
   note: string;
 }
 
+interface PlaylistVideo {
+  id: string;
+  title: string;
+  index: number;
+}
+
 export default function Home() {
+  const [mode, setMode] = useState<"single" | "playlist" | null>(null);
+
+  // Single video states
   const [url, setUrl] = useState("");
   const [formats, setFormats] = useState<Format[]>([]);
   const [title, setTitle] = useState("");
@@ -20,6 +29,15 @@ export default function Home() {
   const [status, setStatus] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(false);
+
+  // Playlist states
+  const [playlistUrl, setPlaylistUrl] = useState("");
+  const [playlistVideos, setPlaylistVideos] = useState<PlaylistVideo[]>([]);
+  const [selectedPlaylistVideos, setSelectedPlaylistVideos] = useState<string[]>([]);
+  const [playlistTitle, setPlaylistTitle] = useState("");
+  const [playlistStatus, setPlaylistStatus] = useState<string>("");
+  const [playlistError, setPlaylistError] = useState<string>("");
+  const [playlistLoading, setPlaylistLoading] = useState(false);
 
   const fetchFormats = async () => {
     setLoading(true);
@@ -100,118 +118,247 @@ export default function Home() {
     }
   };
 
+  const fetchPlaylistVideos = async () => {
+    setPlaylistLoading(true);
+    setPlaylistError("");
+    setPlaylistVideos([]);
+    setSelectedPlaylistVideos([]);
+    setPlaylistStatus("");
+    try {
+      const res = await fetch("http://127.0.0.1:8000/list_playlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: playlistUrl }),
+      });
+      if (!res.ok) throw new Error("Failed to fetch playlist");
+      const data = await res.json();
+      setPlaylistVideos(data.videos);
+      setPlaylistTitle(data.title);
+      setSelectedPlaylistVideos(data.videos.map((v: PlaylistVideo) => v.id));
+    } catch (e: any) {
+      setPlaylistError(e.message || "Unknown error");
+    } finally {
+      setPlaylistLoading(false);
+    }
+  };
+
+  const handlePlaylistVideoSelect = (id: string) => {
+    setSelectedPlaylistVideos((prev) =>
+      prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]
+    );
+  };
+
+  const downloadPlaylistSelected = async () => {
+    setPlaylistLoading(true);
+    setPlaylistError("");
+    setPlaylistStatus("");
+    try {
+      const res = await fetch("http://127.0.0.1:8000/download_playlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: playlistUrl, video_ids: selectedPlaylistVideos }),
+      });
+      if (!res.ok) throw new Error("Download failed");
+      const data = await res.json();
+      setPlaylistStatus("Playlist download complete!");
+    } catch (e: any) {
+      setPlaylistError(e.message || "Unknown error");
+    } finally {
+      setPlaylistLoading(false);
+    }
+  };
+
   return (
     <main className="max-w-2xl mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4">YouTube Downloader</h1>
-      <div className="mb-4">
-        <input
-          className="border p-2 w-full rounded"
-          type="text"
-          placeholder="Enter YouTube URL"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-        />
+      <div className="flex gap-4 mb-6">
         <button
-          className="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          onClick={fetchFormats}
-          disabled={loading || !url}
+          className={`px-4 py-2 rounded ${mode === "single" ? "bg-blue-700 text-white" : "bg-blue-100 text-blue-700"}`}
+          onClick={() => setMode("single")}
         >
-          {loading ? "Loading..." : "Fetch Formats"}
+          Single Video Download
+        </button>
+        <button
+          className={`px-4 py-2 rounded ${mode === "playlist" ? "bg-green-700 text-white" : "bg-green-100 text-green-700"}`}
+          onClick={() => setMode("playlist")}
+        >
+          Playlist Download
         </button>
       </div>
-      {error && <div className="text-red-600 mb-2">{error}</div>}
-      {formats.length > 0 && (
-        <div className="mb-4">
-          <h2 className="font-semibold mb-2">Available Formats for: {title}</h2>
-          <div className="overflow-x-auto">
-            <table className="min-w-full border text-sm">
-              <thead>
-                <tr>
-                  <th className="border px-2">Select</th>
-                  <th className="border px-2">Format ID</th>
-                  <th className="border px-2">Ext</th>
-                  <th className="border px-2">Res</th>
-                  <th className="border px-2">FPS</th>
-                  <th className="border px-2">Type</th>
-                  <th className="border px-2">Note</th>
-                </tr>
-              </thead>
-              <tbody>
-                {formats.map((f) => (
-                  <tr key={f.format_id}>
-                    <td className="border px-2 text-center">
-                      <input
-                        type="checkbox"
-                        checked={selectedFormats.includes(f.format_id)}
-                        onChange={() => handleFormatSelect(f.format_id)}
-                      />
-                    </td>
-                    <td className="border px-2">{f.format_id}</td>
-                    <td className="border px-2">{f.ext}</td>
-                    <td className="border px-2">{f.resolution}</td>
-                    <td className="border px-2">{f.fps}</td>
-                    <td className="border px-2">{f.type}</td>
-                    <td className="border px-2">{f.note}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <button
-            className="mt-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-            onClick={downloadSelected}
-            disabled={loading || selectedFormats.length === 0}
-          >
-            {loading ? "Downloading..." : "Download Selected"}
-          </button>
-        </div>
-      )}
-      {downloadedFiles.length > 0 && (
-        <div className="mb-4">
-          <h2 className="font-semibold mb-2">Downloaded Files</h2>
-          <ul className="list-disc ml-6">
-            {downloadedFiles.map((f, i) => (
-              <li key={i}>{f}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {downloadedFiles.length === 2 && (
-        <div className="mb-4 border-t pt-4">
-          <h2 className="font-semibold mb-2">Merge Video & Audio</h2>
-          <div className="flex flex-col gap-2">
+      {mode === "single" && (
+        <>
+          <div className="mb-4">
             <input
-              className="border p-2 rounded"
+              className="border p-2 w-full rounded"
               type="text"
-              placeholder="Video file path"
-              value={mergePaths.video}
-              onChange={e => setMergePaths({ ...mergePaths, video: e.target.value })}
-            />
-            <input
-              className="border p-2 rounded"
-              type="text"
-              placeholder="Audio file path"
-              value={mergePaths.audio}
-              onChange={e => setMergePaths({ ...mergePaths, audio: e.target.value })}
-            />
-            <input
-              className="border p-2 rounded"
-              type="text"
-              placeholder="Output file name (e.g., merged.mp4)"
-              value={mergePaths.output}
-              onChange={e => setMergePaths({ ...mergePaths, output: e.target.value })}
+              placeholder="Enter YouTube URL"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
             />
             <button
-              className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
-              onClick={handleMerge}
-              disabled={loading || !mergePaths.video || !mergePaths.audio || !mergePaths.output}
+              className="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              onClick={fetchFormats}
+              disabled={loading || !url}
             >
-              {loading ? "Merging..." : "Merge"}
+              {loading ? "Loading..." : "Fetch Formats"}
             </button>
           </div>
-        </div>
+          {error && <div className="text-red-600 mb-2">{error}</div>}
+          {formats.length > 0 && (
+            <div className="mb-4">
+              <h2 className="font-semibold mb-2">Available Formats for: {title}</h2>
+              <div className="overflow-x-auto">
+                <table className="min-w-full border text-sm">
+                  <thead>
+                    <tr>
+                      <th className="border px-2">Select</th>
+                      <th className="border px-2">Format ID</th>
+                      <th className="border px-2">Ext</th>
+                      <th className="border px-2">Res</th>
+                      <th className="border px-2">FPS</th>
+                      <th className="border px-2">Type</th>
+                      <th className="border px-2">Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {formats.map((f) => (
+                      <tr key={f.format_id}>
+                        <td className="border px-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedFormats.includes(f.format_id)}
+                            onChange={() => handleFormatSelect(f.format_id)}
+                          />
+                        </td>
+                        <td className="border px-2">{f.format_id}</td>
+                        <td className="border px-2">{f.ext}</td>
+                        <td className="border px-2">{f.resolution}</td>
+                        <td className="border px-2">{f.fps}</td>
+                        <td className="border px-2">{f.type}</td>
+                        <td className="border px-2">{f.note}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button
+                className="mt-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                onClick={downloadSelected}
+                disabled={loading || selectedFormats.length === 0}
+              >
+                {loading ? "Downloading..." : "Download Selected"}
+              </button>
+            </div>
+          )}
+          {downloadedFiles.length > 0 && (
+            <div className="mb-4">
+              <h2 className="font-semibold mb-2">Downloaded Files</h2>
+              <ul className="list-disc ml-6">
+                {downloadedFiles.map((f, i) => (
+                  <li key={i}>{f}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {downloadedFiles.length === 2 && (
+            <div className="mb-4 border-t pt-4">
+              <h2 className="font-semibold mb-2">Merge Video & Audio</h2>
+              <div className="flex flex-col gap-2">
+                <input
+                  className="border p-2 rounded"
+                  type="text"
+                  placeholder="Video file path"
+                  value={mergePaths.video}
+                  onChange={e => setMergePaths({ ...mergePaths, video: e.target.value })}
+                />
+                <input
+                  className="border p-2 rounded"
+                  type="text"
+                  placeholder="Audio file path"
+                  value={mergePaths.audio}
+                  onChange={e => setMergePaths({ ...mergePaths, audio: e.target.value })}
+                />
+                <input
+                  className="border p-2 rounded"
+                  type="text"
+                  placeholder="Output file name (e.g., merged.mp4)"
+                  value={mergePaths.output}
+                  onChange={e => setMergePaths({ ...mergePaths, output: e.target.value })}
+                />
+                <button
+                  className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+                  onClick={handleMerge}
+                  disabled={loading || !mergePaths.video || !mergePaths.audio || !mergePaths.output}
+                >
+                  {loading ? "Merging..." : "Merge"}
+                </button>
+              </div>
+            </div>
+          )}
+          {status && <div className="text-green-700 font-semibold mt-2">{status}</div>}
+        </>
       )}
-      {status && <div className="text-green-700 font-semibold mt-2">{status}</div>}
+      {mode === "playlist" && (
+        <>
+          <div className="mb-4">
+            <input
+              className="border p-2 w-full rounded"
+              type="text"
+              placeholder="Enter YouTube Playlist URL"
+              value={playlistUrl}
+              onChange={(e) => setPlaylistUrl(e.target.value)}
+            />
+            <button
+              className="mt-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+              onClick={fetchPlaylistVideos}
+              disabled={playlistLoading || !playlistUrl}
+            >
+              {playlistLoading ? "Loading..." : "Fetch Playlist"}
+            </button>
+          </div>
+          {playlistError && <div className="text-red-600 mb-2">{playlistError}</div>}
+          {playlistVideos.length > 0 && (
+            <div className="mb-4">
+              <h2 className="font-semibold mb-2">Playlist: {playlistTitle}</h2>
+              <div className="mb-2 text-sm text-gray-700">Default quality: <span className="font-mono">bestvideo+bestaudio/best</span></div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full border text-sm">
+                  <thead>
+                    <tr>
+                      <th className="border px-2">Select</th>
+                      <th className="border px-2">Index</th>
+                      <th className="border px-2">Title</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {playlistVideos.map((v) => (
+                      <tr key={v.id}>
+                        <td className="border px-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedPlaylistVideos.includes(v.id)}
+                            onChange={() => handlePlaylistVideoSelect(v.id)}
+                          />
+                        </td>
+                        <td className="border px-2">{v.index}</td>
+                        <td className="border px-2">{v.title}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button
+                className="mt-2 px-4 py-2 bg-blue-700 text-white rounded hover:bg-blue-800"
+                onClick={downloadPlaylistSelected}
+                disabled={playlistLoading || selectedPlaylistVideos.length === 0}
+              >
+                {playlistLoading ? "Downloading..." : "Download Selected Videos"}
+              </button>
+            </div>
+          )}
+          {playlistStatus && <div className="text-green-700 font-semibold mt-2">{playlistStatus}</div>}
+        </>
+      )}
     </main>
   );
 }
