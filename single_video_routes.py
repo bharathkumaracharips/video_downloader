@@ -1,8 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 import yt_dlp
 from video_audio_merger import merge_video_audio
+import os
 
 router = APIRouter()
 
@@ -60,6 +61,19 @@ async def download(req: DownloadRequest):
 async def merge(req: MergeRequest):
     try:
         merge_video_audio(req.video_path, req.audio_path, req.output_path)
-        return {"status": "success", "output": req.output_path}
+        # After merging, delete the original files
+        for f in [req.video_path, req.audio_path]:
+            try:
+                os.remove(f)
+            except Exception as e:
+                print(f"[WARN] Could not delete {f}: {e}")
+        download_url = f"/download_file?path={req.output_path}"
+        return {"status": "success", "output": req.output_path, "download_url": download_url}
     except Exception as e:
-        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)}) 
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
+
+@router.get("/download_file")
+async def download_file(path: str = Query(..., description="Path to the file to download")):
+    if not os.path.exists(path):
+        return JSONResponse(status_code=404, content={"error": "File not found"})
+    return FileResponse(path, filename=os.path.basename(path), media_type="application/octet-stream") 

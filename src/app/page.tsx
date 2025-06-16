@@ -29,6 +29,7 @@ export default function Home() {
   const [status, setStatus] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [mergeResult, setMergeResult] = useState<any>(null);
 
   // Playlist states
   const [playlistUrl, setPlaylistUrl] = useState("");
@@ -98,6 +99,7 @@ export default function Home() {
     setLoading(true);
     setError("");
     setStatus("");
+    setMergeResult(null);
     try {
       const res = await fetch("http://127.0.0.1:8000/merge", {
         method: "POST",
@@ -111,6 +113,7 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Merge failed");
       setStatus(`Merge complete! Output: ${data.output}`);
+      setMergeResult(data);
     } catch (e: any) {
       setError(e.message || "Unknown error");
     } finally {
@@ -293,6 +296,15 @@ export default function Home() {
                   {loading ? "Merging..." : "Merge"}
                 </button>
               </div>
+              {status && mergeResult?.download_url && (
+                <a
+                  href={`http://127.0.0.1:8000${mergeResult.download_url}`}
+                  download
+                  className="mt-4 inline-block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                  Download Merged File
+                </a>
+              )}
             </div>
           )}
           {status && <div className="text-green-700 font-semibold mt-2">{status}</div>}
