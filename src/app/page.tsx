@@ -39,6 +39,12 @@ export default function Home() {
   const [playlistStatus, setPlaylistStatus] = useState<string>("");
   const [playlistError, setPlaylistError] = useState<string>("");
   const [playlistLoading, setPlaylistLoading] = useState(false);
+  const [isAudioDownloading, setIsAudioDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<{
+    current: number;
+    total: number;
+    files: Array<{ filename: string; status: "success" | "error" }>;
+  }>({ current: 0, total: 0, files: [] });
 
   const fetchFormats = async () => {
     setLoading(true);
@@ -168,6 +174,128 @@ export default function Home() {
       setPlaylistError(e.message || "Unknown error");
     } finally {
       setPlaylistLoading(false);
+    }
+  };
+
+  const downloadPlaylistAudio = async () => {
+    setPlaylistLoading(true);
+    setIsAudioDownloading(true);
+    setPlaylistError("");
+    setPlaylistStatus("");
+    setDownloadProgress({ current: 0, total: 0, files: [] });
+
+    const encodedUrl = encodeURIComponent(playlistUrl);
+    const eventSource = new EventSource(`http://127.0.0.1:8000/download_playlist_audio?url=${encodedUrl}`, {
+      withCredentials: true
+    });
+
+    // Clean up function to properly close EventSource
+    const cleanup = () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+      setPlaylistLoading(false);
+      setIsAudioDownloading(false);
+    };
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log("Progress update:", data);
+      } catch (error) {
+        console.error("Error parsing message:", error);
+      }
+    };
+
+    eventSource.addEventListener("total", (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        setDownloadProgress(prev => ({
+          ...prev,
+          total: data.total
+        }));
+      } catch (error) {
+        console.error("Error parsing total event:", error);
+        cleanup();
+      }
+    });
+
+    eventSource.addEventListener("progress", (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        setDownloadProgress(prev => ({
+          current: data.current,
+          total: data.total,
+          files: [...prev.files, { filename: data.filename, status: data.status }]
+        }));
+      } catch (error) {
+        console.error("Error parsing progress event:", error);
+        cleanup();
+      }
+    });
+
+    eventSource.addEventListener("complete", (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        setPlaylistStatus("Playlist audio download complete!");
+        cleanup();
+      } catch (error) {
+        console.error("Error parsing complete event:", error);
+        cleanup();
+      }
+    });
+
+    eventSource.addEventListener("error", (e: MessageEvent) => {
+      try {
+        if (e.data) {
+          const data = JSON.parse(e.data);
+          setPlaylistError(data.message || "Download failed");
+        } else {
+          setPlaylistError("Connection failed");
+        }
+      } catch (error) {
+        console.error("Error parsing error event:", error);
+        setPlaylistError("Connection failed");
+      } finally {
+        cleanup();
+      }
+    });
+
+    eventSource.addEventListener("stopped", (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        setPlaylistStatus(data.message);
+        cleanup();
+      } catch (error) {
+        console.error("Error parsing stopped event:", error);
+        cleanup();
+      }
+    });
+
+    // Handle connection errors
+    eventSource.onerror = (error) => {
+      console.error("EventSource failed:", error);
+      setPlaylistError("Connection failed");
+      cleanup();
+    };
+
+    // Clean up on component unmount
+    return () => {
+      cleanup();
+    };
+  };
+
+  const stopDownload = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/stop_download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error("Failed to stop download");
+      setPlaylistStatus("Download stopped.");
+    } catch (e: any) {
+      setPlaylistError(e.message || "Unknown error");
     }
   };
 
@@ -320,15 +448,65 @@ export default function Home() {
               value={playlistUrl}
               onChange={(e) => setPlaylistUrl(e.target.value)}
             />
-            <button
-              className="mt-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-              onClick={fetchPlaylistVideos}
-              disabled={playlistLoading || !playlistUrl}
-            >
-              {playlistLoading ? "Loading..." : "Fetch Playlist"}
-            </button>
+            <div className="flex gap-2">
+              <button
+                className="mt-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                onClick={fetchPlaylistVideos}
+                disabled={playlistLoading || !playlistUrl}
+              >
+                {playlistLoading ? "Loading..." : "Fetch Playlist"}
+              </button>
+              <button
+                className="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                onClick={downloadPlaylistAudio}
+                disabled={playlistLoading || !playlistUrl || isAudioDownloading}
+              >
+                {isAudioDownloading ? "Downloading Songs..." : "Download Songs (MP3)"}
+              </button>
+              {(playlistLoading || isAudioDownloading) && (
+                <button
+                  className="mt-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                  onClick={stopDownload}
+                >
+                  Stop Download
+                </button>
+              )}
+            </div>
           </div>
           {playlistError && <div className="text-red-600 mb-2">{playlistError}</div>}
+          {downloadProgress.total > 0 && (
+            <div className="mt-4">
+              <h3 className="font-semibold mb-2">Download Progress</h3>
+              <div className="bg-gray-200 rounded-full h-4 mb-2">
+                <div 
+                  className="bg-blue-600 h-4 rounded-full transition-all duration-300"
+                  style={{ width: `${(downloadProgress.current / downloadProgress.total) * 100}%` }}
+                ></div>
+              </div>
+              <p className="text-sm text-gray-600 mb-2">
+                Downloaded: {downloadProgress.current} / {downloadProgress.total}
+              </p>
+              {downloadProgress.files.length > 0 && (
+                <div className="mt-2">
+                  <h4 className="font-medium mb-1">Downloaded Files:</h4>
+                  <div className="max-h-40 overflow-y-auto">
+                    {downloadProgress.files.map((file, index) => (
+                      <div 
+                        key={index} 
+                        className={`text-sm py-1 border-b ${
+                          file.status === "error" ? "text-red-600" : "text-gray-800"
+                        }`}
+                      >
+                        <span className="text-gray-600">{index + 1}/{downloadProgress.total}</span>
+                        {" - "}
+                        <span>{file.filename}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {playlistVideos.length > 0 && (
             <div className="mb-4">
               <h2 className="font-semibold mb-2">Playlist: {playlistTitle}</h2>
