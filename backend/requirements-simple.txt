@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+yt-dlp
+pydantic
+pydantic-settings
+sqlalchemy
+aiofiles
+python-multipart
+sse-starlette
+httpx
+Pillow
+ffmpeg-python
