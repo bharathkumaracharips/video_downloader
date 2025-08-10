@@ -13,6 +13,7 @@ from api.routes import video, audio, playlist, live, formats, queue
 from core.config import settings
 from core.database import init_db
 from core.logger import setup_logging
+from core.downloader import downloader
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -57,6 +58,59 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+@app.get("/system/status")
+async def system_status():
+    """Get system resource status"""
+    try:
+        import psutil
+        
+        # Get memory info
+        memory = psutil.virtual_memory()
+        
+        # Get CPU info
+        cpu_percent = psutil.cpu_percent(interval=1)
+        
+        # Get disk info for downloads directory
+        disk = psutil.disk_usage(settings.DOWNLOAD_DIR)
+        
+        return {
+            "status": "healthy",
+            "memory": {
+                "total": memory.total,
+                "available": memory.available,
+                "percent": memory.percent,
+                "free_gb": round(memory.available / (1024**3), 2)
+            },
+            "cpu": {
+                "percent": cpu_percent
+            },
+            "disk": {
+                "total": disk.total,
+                "free": disk.free,
+                "percent": round((disk.used / disk.total) * 100, 2),
+                "free_gb": round(disk.free / (1024**3), 2)
+            }
+        }
+    except ImportError:
+        return {"status": "healthy", "note": "psutil not available for detailed monitoring"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+@app.post("/system/cleanup")
+async def cleanup_system():
+    """Clean up system resources and hanging processes"""
+    try:
+        # Clean up downloader processes
+        downloader._cleanup_processes()
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+        
+        return {"status": "success", "message": "System cleanup completed"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 if __name__ == "__main__":
     uvicorn.run(

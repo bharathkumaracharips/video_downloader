@@ -863,6 +863,31 @@ export default function Home() {
 
         {/* Sidebar */}
         <div className="space-y-6">
+          {/* System Status */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">System Status</h3>
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API_BASE}/system/cleanup`, { method: 'POST' });
+                    if (res.ok) {
+                      setStatus("System cleanup completed");
+                    }
+                  } catch (e) {
+                    setError("Cleanup failed");
+                  }
+                }}
+                className="px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
+              >
+                🧹 Cleanup
+              </button>
+            </div>
+            <div className="text-xs text-gray-600">
+              <p>Click cleanup if downloads are failing or system seems slow</p>
+            </div>
+          </div>
+
           {/* Queue Status */}
           {queueStatus && (
             <div className="bg-white rounded-lg shadow-md p-6">

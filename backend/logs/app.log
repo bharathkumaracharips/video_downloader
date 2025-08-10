@@ -3,3 +3,5 @@
 2025-08-10 10:58:09,367 - services.queue_manager - INFO - Started download e66e2690-412d-4a87-96b1-68f9ebd70d25
 2025-08-10 10:58:17,387 - services.queue_manager - INFO - Download e66e2690-412d-4a87-96b1-68f9ebd70d25 completed successfully
 2025-08-10 10:58:17,388 - services.queue_manager - INFO - Queue processing stopped
+2025-08-10 20:17:15,502 - core.downloader - ERROR - Frame download error: Download failed - no info returned
+2025-08-10 20:17:15,503 - api.routes.video - ERROR - Error downloading frame: Frame download failed: Download failed - no info returned

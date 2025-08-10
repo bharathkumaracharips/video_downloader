@@ -7,6 +7,10 @@ import asyncio
 import os
 import uuid
 import re
+import subprocess
+import signal
+import time
+import gc
 from typing import Dict, Any, Optional, Callable, List
 from pathlib import Path
 import json
@@ -35,9 +39,11 @@ class AdvancedDownloader:
     def __init__(self):
         self.active_downloads: Dict[str, Dict] = {}
         self.progress_callbacks: Dict[str, Callable] = {}
+        self.ffmpeg_processes: Dict[str, subprocess.Popen] = {}
+        self.max_concurrent_downloads = 2  # Limit concurrent downloads
         
     def get_base_options(self) -> Dict[str, Any]:
-        """Get base yt-dlp options"""
+        """Get base yt-dlp options with crash prevention"""
         return {
             'outtmpl': os.path.join(settings.DOWNLOAD_DIR, '%(title).100s.%(ext)s'),
             'restrictfilenames': True,
@@ -60,13 +66,27 @@ class AdvancedDownloader:
                 'Sec-Fetch-Mode': 'navigate',
             },
             'retries': 3,
-            'fragment_retries': 10,
-            'extractor_retries': 3,
-            'socket_timeout': 30,
-            # Video+Audio merging options
+            'fragment_retries': 5,  # Reduced to prevent excessive retries
+            'extractor_retries': 2,  # Reduced to prevent excessive retries
+            'socket_timeout': 60,  # Increased timeout for large files
+            # Video+Audio merging options with crash prevention
             'merge_output_format': 'mp4',
             'prefer_ffmpeg': True,
             'keepvideo': False,  # Don't keep separate video/audio files after merging
+            # FFmpeg options to prevent crashes
+            'postprocessor_args': {
+                'ffmpeg': [
+                    '-threads', '2',  # Limit CPU threads to prevent overload
+                    '-preset', 'fast',  # Use fast preset to reduce processing time
+                    '-movflags', '+faststart',  # Optimize for streaming
+                    '-avoid_negative_ts', 'make_zero',  # Fix timestamp issues
+                    '-fflags', '+genpts',  # Generate presentation timestamps
+                    '-max_muxing_queue_size', '1024',  # Limit queue size
+                ]
+            },
+            # Memory management
+            'concurrent_fragment_downloads': 1,  # Reduce concurrent downloads
+            'buffersize': 1024 * 1024,  # 1MB buffer size
         }
     
     def create_progress_hook(self, download_id: str, callback: Optional[Callable] = None):
@@ -296,7 +316,7 @@ class AdvancedDownloader:
     
     async def download_video_with_merge(self, url: str, quality: str = "best", 
                                       progress_callback: Optional[Callable] = None) -> str:
-        """Download video with automatic video+audio merging for high quality"""
+        """Download video with automatic video+audio merging for high quality - crash-safe version"""
         download_id = str(uuid.uuid4())
         
         # Determine format selector based on quality
@@ -317,47 +337,93 @@ class AdvancedDownloader:
             'outtmpl': os.path.join(settings.DOWNLOAD_DIR, '%(title).100s.%(ext)s'),
             'restrictfilenames': True,
             'windowsfilenames': True,  # Ensure Windows compatibility
+            # Additional crash prevention options
+            'writeinfojson': False,  # Don't write info files to save space
+            'writethumbnail': False,  # Don't download thumbnails
+            'writesubtitles': False,  # Don't download subtitles unless requested
+            # FFmpeg-specific options for stability
+            'postprocessor_args': {
+                'ffmpeg': [
+                    '-threads', '2',  # Limit threads to prevent CPU overload
+                    '-preset', 'fast',  # Fast encoding preset
+                    '-crf', '23',  # Reasonable quality/size balance
+                    '-maxrate', '10M',  # Limit bitrate to prevent memory issues
+                    '-bufsize', '20M',  # Buffer size for rate control
+                    '-movflags', '+faststart',  # Optimize for streaming
+                    '-avoid_negative_ts', 'make_zero',  # Fix timestamp issues
+                    '-max_muxing_queue_size', '1024',  # Limit muxing queue
+                    '-fflags', '+genpts+igndts',  # Generate PTS and ignore DTS
+                ]
+            },
         })
         ydl_opts['progress_hooks'] = [self.create_progress_hook(download_id, progress_callback)]
         
         try:
+            # Check system resources before starting
+            if not self._check_system_resources():
+                raise Exception("Insufficient system resources for download")
+            
+            # Clean up any hanging processes
+            self._cleanup_processes()
+            
             self.active_downloads[download_id] = {
                 'status': DownloadStatus.DOWNLOADING,
                 'url': url,
-                'format': format_selector
+                'format': format_selector,
+                'start_time': time.time()
             }
             
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: ydl.extract_info(url, download=True)
-                )
-                
-                if not info:
-                    raise Exception("Download failed - no info returned")
-                
-                # Get the final merged filename
-                filename = ydl.prepare_filename(info)
-                base_name = os.path.splitext(filename)[0]
-                final_filename = f"{base_name}.mp4"
-                
-                # Check if merged file exists
-                if os.path.exists(final_filename):
-                    filename = final_filename
-                elif os.path.exists(filename):
-                    # File might already be in correct format
-                    pass
-                else:
-                    raise Exception("Merged file not found after download")
-                
-                self.active_downloads[download_id]['status'] = DownloadStatus.COMPLETED
-                self.active_downloads[download_id]['filename'] = filename
-                
-                return filename
+            # Use a timeout for the download operation
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    # Set a reasonable timeout for large downloads (30 minutes)
+                    info = await asyncio.wait_for(
+                        asyncio.get_event_loop().run_in_executor(
+                            None, lambda: ydl.extract_info(url, download=True)
+                        ),
+                        timeout=1800  # 30 minutes timeout
+                    )
+                    
+                    if not info:
+                        raise Exception("Download failed - no info returned")
+                    
+                    # Get the final merged filename
+                    filename = ydl.prepare_filename(info)
+                    base_name = os.path.splitext(filename)[0]
+                    final_filename = f"{base_name}.mp4"
+                    
+                    # Check if merged file exists
+                    if os.path.exists(final_filename):
+                        filename = final_filename
+                    elif os.path.exists(filename):
+                        # File might already be in correct format
+                        pass
+                    else:
+                        raise Exception("Merged file not found after download")
+                    
+                    # Verify file is not corrupted
+                    if os.path.getsize(filename) < 1024:  # Less than 1KB
+                        raise Exception("Downloaded file appears to be corrupted (too small)")
+                    
+                    self.active_downloads[download_id]['status'] = DownloadStatus.COMPLETED
+                    self.active_downloads[download_id]['filename'] = filename
+                    
+                    # Clean up after successful download
+                    self._cleanup_processes()
+                    
+                    return filename
+                    
+            except asyncio.TimeoutError:
+                raise Exception("Download timed out after 30 minutes")
                 
         except Exception as e:
             logger.error(f"Video merge download error: {e}")
             self.active_downloads[download_id]['status'] = DownloadStatus.FAILED
             self.active_downloads[download_id]['error'] = str(e)
+            
+            # Clean up on error
+            self._cleanup_processes()
+            
             raise Exception(f"Video download with merge failed: {str(e)}")
     
     def get_download_status(self, download_id: str) -> Optional[Dict]:
@@ -367,7 +433,7 @@ class AdvancedDownloader:
     async def download_frame_with_audio(self, url: str, video_format_id: str, 
                                       audio_format_id: Optional[str] = None,
                                       progress_callback: Optional[Callable] = None) -> str:
-        """Download specific video frame and merge with best audio"""
+        """Download specific video frame and merge with best audio - crash-safe version"""
         download_id = str(uuid.uuid4())
         
         # If no audio format specified, use best audio
@@ -385,6 +451,20 @@ class AdvancedDownloader:
             'outtmpl': os.path.join(settings.DOWNLOAD_DIR, '%(title).100s.%(ext)s'),
             'restrictfilenames': True,
             'windowsfilenames': True,
+            # Memory and stability optimizations
+            'writeinfojson': False,
+            'writethumbnail': False,
+            'concurrent_fragment_downloads': 1,  # Single thread for stability
+            # Safe FFmpeg options
+            'postprocessor_args': {
+                'ffmpeg': [
+                    '-threads', '1',  # Single thread for frame downloads
+                    '-preset', 'ultrafast',  # Fastest preset for single frames
+                    '-avoid_negative_ts', 'make_zero',
+                    '-max_muxing_queue_size', '512',  # Smaller queue for frames
+                    '-movflags', '+faststart',
+                ]
+            },
         })
         ydl_opts['progress_hooks'] = [self.create_progress_hook(download_id, progress_callback)]
         
@@ -427,10 +507,70 @@ class AdvancedDownloader:
             self.active_downloads[download_id]['error'] = str(e)
             raise Exception(f"Frame download failed: {str(e)}")
 
+    def _cleanup_processes(self):
+        """Clean up any hanging FFmpeg processes"""
+        try:
+            # Clean up tracked processes
+            for download_id, process in list(self.ffmpeg_processes.items()):
+                if process.poll() is not None:  # Process has finished
+                    del self.ffmpeg_processes[download_id]
+                elif time.time() - process.creation_time > 3600:  # Process running > 1 hour
+                    logger.warning(f"Terminating long-running FFmpeg process for {download_id}")
+                    process.terminate()
+                    time.sleep(2)
+                    if process.poll() is None:
+                        process.kill()
+                    del self.ffmpeg_processes[download_id]
+            
+            # Force garbage collection
+            gc.collect()
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up processes: {e}")
+    
+    def _check_system_resources(self) -> bool:
+        """Check if system has enough resources for download"""
+        try:
+            # Check available memory (require at least 500MB free)
+            memory = os.popen('free -m').read() if os.name != 'nt' else None
+            if memory:
+                lines = memory.strip().split('\n')
+                if len(lines) > 1:
+                    available = int(lines[1].split()[6])  # Available memory
+                    if available < 500:  # Less than 500MB
+                        logger.warning(f"Low memory: {available}MB available")
+                        return False
+            
+            # Check active downloads count
+            active_count = sum(1 for d in self.active_downloads.values() 
+                             if d.get('status') == DownloadStatus.DOWNLOADING)
+            if active_count >= self.max_concurrent_downloads:
+                logger.warning(f"Too many active downloads: {active_count}")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error checking system resources: {e}")
+            return True  # Allow download if check fails
+    
     def cancel_download(self, download_id: str) -> bool:
-        """Cancel active download"""
+        """Cancel active download and clean up resources"""
         if download_id in self.active_downloads:
             self.active_downloads[download_id]['status'] = DownloadStatus.CANCELLED
+            
+            # Clean up any associated FFmpeg process
+            if download_id in self.ffmpeg_processes:
+                try:
+                    process = self.ffmpeg_processes[download_id]
+                    process.terminate()
+                    time.sleep(1)
+                    if process.poll() is None:
+                        process.kill()
+                    del self.ffmpeg_processes[download_id]
+                except Exception as e:
+                    logger.error(f"Error terminating process for {download_id}: {e}")
+            
             return True
         return False
 
