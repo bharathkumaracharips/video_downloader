@@ -14,6 +14,21 @@ interface Format {
   format_note: string;
 }
 
+interface Frame {
+  format_id: string;
+  resolution: string;
+  fps: number;
+  codec: string;
+  container: string;
+  bitrate: number;
+  filesize: number;
+  filesize_mb: number;
+  quality_score: number;
+  has_audio: boolean;
+  audio_codec: string;
+  audio_bitrate: number;
+}
+
 interface VideoInfo {
   id: string;
   title: string;
@@ -21,6 +36,7 @@ interface VideoInfo {
   uploader: string;
   thumbnail: string;
   formats: Format[];
+  frames: Frame[];
 }
 
 interface PlaylistVideo {
@@ -56,6 +72,8 @@ export default function Home() {
   const [selectedFormat, setSelectedFormat] = useState("mp4");
   const [audioFormat, setAudioFormat] = useState("mp3");
   const [audioQuality, setAudioQuality] = useState("320");
+  const [selectedFrame, setSelectedFrame] = useState<string | null>(null);
+  const [mergeAudio, setMergeAudio] = useState(true);
 
   // Queue states
   const [downloads, setDownloads] = useState<DownloadProgress[]>([]);
@@ -168,6 +186,35 @@ export default function Home() {
         status: data.status,
         progress: 0,
       }]);
+
+    } catch (e: any) {
+      setError(e.message || "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const downloadFrame = async () => {
+    if (!url || !selectedFrame) return;
+
+    setLoading(true);
+    setError("");
+    setStatus("");
+
+    try {
+      const res = await fetch(`${API_BASE}/video/download/frame`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url,
+          format_id: selectedFrame,
+          merge_audio: mergeAudio,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Frame download failed");
+      const data = await res.json();
+      setStatus(`Frame downloaded successfully: ${data.filename}`);
 
     } catch (e: any) {
       setError(e.message || "Unknown error");
@@ -413,11 +460,11 @@ export default function Home() {
           {/* Video Mode */}
           {mode === "video" && (
             <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-              <h2 className="text-xl font-semibold mb-4">Video Download</h2>
+              <h2 className="text-xl font-semibold mb-4">Video Download - Available Frames</h2>
 
               {videoInfo && (
                 <div className="mb-6">
-                  <div className="flex gap-4 mb-4">
+                  <div className="flex gap-4 mb-6">
                     {videoInfo.thumbnail && (
                       <img
                         src={videoInfo.thumbnail}
@@ -434,60 +481,111 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Quality
-                      </label>
-                      <select
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                        value={selectedQuality}
-                        onChange={(e) => setSelectedQuality(e.target.value)}
-                      >
-                        <option value="best">Best Quality (Auto-merge)</option>
-                        <option value="best[height<=2160]">4K (2160p)</option>
-                        <option value="best[height<=1440]">2K (1440p)</option>
-                        <option value="best[height<=1080]">Full HD (1080p)</option>
-                        <option value="best[height<=720]">HD (720p)</option>
-                        <option value="best[height<=480]">SD (480p)</option>
-                        <option value="worst">Smallest File</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Output Format
-                      </label>
-                      <select
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                        value={selectedFormat}
-                        onChange={(e) => setSelectedFormat(e.target.value)}
-                      >
-                        <option value="auto">MP4 (Recommended)</option>
-                        <option value="webm">WebM</option>
-                        <option value="mkv">MKV</option>
-                      </select>
-                    </div>
+                  {/* Frame Selection Options */}
+                  <div className="mb-4">
+                    <label className="flex items-center gap-2 mb-2">
+                      <input
+                        type="checkbox"
+                        checked={mergeAudio}
+                        onChange={(e) => setMergeAudio(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm font-medium text-gray-700">
+                        Merge with best audio (recommended)
+                      </span>
+                    </label>
                   </div>
-                  
-                  {/* Quality Info */}
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+
+                  {/* Frames Table */}
+                  {videoInfo.frames && videoInfo.frames.length > 0 && (
+                    <div className="mb-6">
+                      <h4 className="font-medium text-gray-900 mb-3">Available Video Frames:</h4>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full border border-gray-200 rounded-lg">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Select</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Resolution</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">FPS</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Codec</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Container</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Bitrate</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Audio</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {videoInfo.frames.map((frame, index) => (
+                              <tr 
+                                key={frame.format_id}
+                                className={`hover:bg-gray-50 ${selectedFrame === frame.format_id ? 'bg-blue-50 border-blue-200' : ''}`}
+                              >
+                                <td className="px-4 py-3">
+                                  <input
+                                    type="radio"
+                                    name="selectedFrame"
+                                    value={frame.format_id}
+                                    checked={selectedFrame === frame.format_id}
+                                    onChange={(e) => setSelectedFrame(e.target.value)}
+                                    className="text-blue-600"
+                                  />
+                                </td>
+                                <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                                  {frame.resolution}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-500">
+                                  {frame.fps ? `${frame.fps}fps` : 'N/A'}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-500">
+                                  {frame.codec}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-500">
+                                  {frame.container.toUpperCase()}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-500">
+                                  {frame.bitrate ? `${Math.round(frame.bitrate)}k` : 'N/A'}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-500">
+                                  {frame.filesize_mb ? `${frame.filesize_mb}MB` : 'N/A'}
+                                </td>
+                                <td className="px-4 py-3 text-sm">
+                                  {frame.has_audio ? (
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                      ✓ {frame.audio_codec}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                                      Video Only
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Download Button */}
+                  <button
+                    className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    onClick={downloadFrame}
+                    disabled={loading || !selectedFrame}
+                  >
+                    {loading ? "Downloading..." : selectedFrame ? `Download Selected Frame${mergeAudio ? ' + Audio' : ''}` : "Select a frame to download"}
+                  </button>
+
+                  {/* Info Box */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-4">
                     <div className="flex items-start gap-2">
-                      <div className="text-blue-600 mt-0.5">🔧</div>
+                      <div className="text-blue-600 mt-0.5">📋</div>
                       <div className="text-sm text-blue-800">
-                        <strong>Smart Download:</strong> High-quality videos (1080p+) automatically download 
-                        separate video and audio streams, then merge them into a single MP4 file for the best quality.
+                        <strong>Frame Selection:</strong> Choose the exact video quality and format you want. 
+                        {mergeAudio ? ' Audio will be automatically merged for the best experience.' : ' Video-only download without audio.'}
                       </div>
                     </div>
                   </div>
-
-                  <button
-                    className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                    onClick={downloadVideo}
-                    disabled={loading}
-                  >
-                    {loading ? "Starting Download..." : "Download Video (Auto-merge)"}
-                  </button>
                 </div>
               )}
             </div>

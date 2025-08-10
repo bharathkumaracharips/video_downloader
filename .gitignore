@@ -39,3 +39,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Backend specific
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/.env
+
+# Downloads directory - exclude large video/audio files
+backend/downloads/
+/Users/psbharathkumarachari/video_downloader/backend/downloads

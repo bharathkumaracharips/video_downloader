@@ -7,7 +7,7 @@ from typing import Dict, Any
 import os
 import logging
 
-from core.models import VideoDownloadRequest, DownloadResponse, URLRequest, VideoInfo
+from core.models import VideoDownloadRequest, DownloadResponse, URLRequest, VideoInfo, FrameDownloadRequest
 from core.downloader import downloader
 from services.queue_manager import queue_manager
 from core.config import settings
@@ -141,3 +141,36 @@ async def get_video_formats(video_id: str):
     except Exception as e:
         logger.error(f"Error getting video formats: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+@router.post("/download/frame", response_model=DownloadResponse)
+async def download_video_frame(request: FrameDownloadRequest):
+    """Download specific video frame with optional audio merging"""
+    try:
+        if request.merge_audio:
+            filename = await downloader.download_frame_with_audio(
+                str(request.url), 
+                request.format_id, 
+                request.audio_format_id
+            )
+        else:
+            # Download video only
+            options = {
+                'format': request.format_id,
+                'outtmpl': os.path.join(
+                    settings.DOWNLOAD_DIR, 
+                    '%(title).100s.%(ext)s'
+                ),
+            }
+            filename = await downloader.download_video(str(request.url), options)
+        
+        return DownloadResponse(
+            download_id="frame_direct",
+            status="completed",
+            message="Frame downloaded successfully",
+            filename=os.path.basename(filename),
+            file_path=filename,
+            download_url=f"/downloads/{os.path.basename(filename)}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading frame: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

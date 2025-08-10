@@ -63,6 +63,12 @@ class LiveStreamRequest(BaseModel):
     duration: Optional[int] = None  # seconds
     wait_for_live: bool = True
 
+class FrameDownloadRequest(BaseModel):
+    url: HttpUrl
+    format_id: str
+    merge_audio: bool = True
+    audio_format_id: Optional[str] = None
+
 # Response Models
 class FormatInfo(BaseModel):
     format_id: str
@@ -81,6 +87,20 @@ class FormatInfo(BaseModel):
     has_video: bool = False
     has_audio: bool = False
 
+class FrameInfo(BaseModel):
+    format_id: str
+    resolution: str
+    fps: Optional[float] = None
+    codec: str
+    container: str
+    bitrate: Optional[float] = None
+    filesize: Optional[int] = None
+    filesize_mb: Optional[float] = None
+    quality_score: Optional[float] = None
+    has_audio: bool = False
+    audio_codec: Optional[str] = None
+    audio_bitrate: Optional[float] = None
+
 class VideoInfo(BaseModel):
     id: str
     title: str
@@ -92,6 +112,7 @@ class VideoInfo(BaseModel):
     like_count: Optional[int] = None
     thumbnail: Optional[str] = None
     formats: List[FormatInfo] = []
+    frames: List[FrameInfo] = []
     subtitles: Optional[Dict[str, Any]] = None
     is_live: bool = False
     live_status: Optional[str] = None

@@ -13,7 +13,7 @@ import json
 import logging
 
 from core.config import settings
-from core.models import DownloadMode, DownloadStatus, DownloadProgress, VideoInfo, FormatInfo, PlaylistInfo
+from core.models import DownloadMode, DownloadStatus, DownloadProgress, VideoInfo, FormatInfo, FrameInfo, PlaylistInfo
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +130,8 @@ class AdvancedDownloader:
                 
                 # Process formats
                 formats = []
+                frames = []
+                
                 for f in info.get('formats', []):
                     format_info = FormatInfo(
                         format_id=f.get('format_id', ''),
@@ -149,6 +151,40 @@ class AdvancedDownloader:
                         has_audio=f.get('acodec', 'none') != 'none'
                     )
                     formats.append(format_info)
+                    
+                    # Create frame info for video formats
+                    if f.get('vcodec', 'none') != 'none' and f.get('resolution'):
+                        filesize_mb = None
+                        if f.get('filesize'):
+                            filesize_mb = round(f.get('filesize') / (1024 * 1024), 1)
+                        elif f.get('filesize_approx'):
+                            filesize_mb = round(f.get('filesize_approx') / (1024 * 1024), 1)
+                        
+                        # Calculate quality score based on resolution and bitrate
+                        quality_score = 0
+                        if f.get('height'):
+                            quality_score += f.get('height', 0) * 0.1
+                        if f.get('tbr'):
+                            quality_score += f.get('tbr', 0) * 0.01
+                        
+                        frame_info = FrameInfo(
+                            format_id=f.get('format_id', ''),
+                            resolution=f.get('resolution', 'Unknown'),
+                            fps=f.get('fps'),
+                            codec=f.get('vcodec', 'Unknown'),
+                            container=f.get('ext', 'Unknown'),
+                            bitrate=f.get('vbr') or f.get('tbr'),
+                            filesize=f.get('filesize') or f.get('filesize_approx'),
+                            filesize_mb=filesize_mb,
+                            quality_score=quality_score,
+                            has_audio=f.get('acodec', 'none') != 'none',
+                            audio_codec=f.get('acodec') if f.get('acodec', 'none') != 'none' else None,
+                            audio_bitrate=f.get('abr')
+                        )
+                        frames.append(frame_info)
+                
+                # Sort frames by quality score (highest first)
+                frames.sort(key=lambda x: x.quality_score or 0, reverse=True)
                 
                 return VideoInfo(
                     id=info.get('id', ''),
@@ -161,6 +197,7 @@ class AdvancedDownloader:
                     like_count=info.get('like_count'),
                     thumbnail=info.get('thumbnail'),
                     formats=formats,
+                    frames=frames,
                     subtitles=info.get('subtitles'),
                     is_live=info.get('is_live', False),
                     live_status=info.get('live_status')
@@ -327,6 +364,69 @@ class AdvancedDownloader:
         """Get download status by ID"""
         return self.active_downloads.get(download_id)
     
+    async def download_frame_with_audio(self, url: str, video_format_id: str, 
+                                      audio_format_id: Optional[str] = None,
+                                      progress_callback: Optional[Callable] = None) -> str:
+        """Download specific video frame and merge with best audio"""
+        download_id = str(uuid.uuid4())
+        
+        # If no audio format specified, use best audio
+        if audio_format_id:
+            format_selector = f"{video_format_id}+{audio_format_id}"
+        else:
+            format_selector = f"{video_format_id}+bestaudio"
+        
+        ydl_opts = self.get_base_options()
+        ydl_opts.update({
+            'format': format_selector,
+            'merge_output_format': 'mp4',
+            'prefer_ffmpeg': True,
+            'keepvideo': False,
+            'outtmpl': os.path.join(settings.DOWNLOAD_DIR, '%(title).100s.%(ext)s'),
+            'restrictfilenames': True,
+            'windowsfilenames': True,
+        })
+        ydl_opts['progress_hooks'] = [self.create_progress_hook(download_id, progress_callback)]
+        
+        try:
+            self.active_downloads[download_id] = {
+                'status': DownloadStatus.DOWNLOADING,
+                'url': url,
+                'format': format_selector
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: ydl.extract_info(url, download=True)
+                )
+                
+                if not info:
+                    raise Exception("Download failed - no info returned")
+                
+                # Get the final merged filename
+                filename = ydl.prepare_filename(info)
+                base_name = os.path.splitext(filename)[0]
+                final_filename = f"{base_name}.mp4"
+                
+                # Check if merged file exists
+                if os.path.exists(final_filename):
+                    filename = final_filename
+                elif os.path.exists(filename):
+                    pass
+                else:
+                    raise Exception("Merged file not found after download")
+                
+                self.active_downloads[download_id]['status'] = DownloadStatus.COMPLETED
+                self.active_downloads[download_id]['filename'] = filename
+                
+                return filename
+                
+        except Exception as e:
+            logger.error(f"Frame download error: {e}")
+            self.active_downloads[download_id]['status'] = DownloadStatus.FAILED
+            self.active_downloads[download_id]['error'] = str(e)
+            raise Exception(f"Frame download failed: {str(e)}")
+
     def cancel_download(self, download_id: str) -> bool:
         """Cancel active download"""
         if download_id in self.active_downloads:
