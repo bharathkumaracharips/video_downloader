@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 import os
 import logging
 
-from core.models import AudioDownloadRequest, DownloadResponse, URLRequest
+from core.models import AudioDownloadRequest, MusicDownloadRequest, SponsorBlockMusicRequest, DownloadResponse, URLRequest
 from core.downloader import downloader
 from services.queue_manager import queue_manager
 from core.config import settings
@@ -127,6 +127,108 @@ async def extract_audio_from_video(request: URLRequest):
     except Exception as e:
         logger.error(f"Error extracting audio info: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/download/music/sponsorblock", response_model=DownloadResponse)
+async def download_music_with_sponsorblock(request: SponsorBlockMusicRequest):
+    """Download music with SponsorBlock integration to automatically remove unwanted segments"""
+    try:
+        filename = await downloader.download_music_with_sponsorblock(
+            str(request.url),
+            request.quality,
+            request.format,
+            request.remove_categories,
+            request.mark_categories,
+            request.sponsorblock_api
+        )
+        
+        return DownloadResponse(
+            download_id="sponsorblock_music_direct",
+            status="completed",
+            message="Music downloaded with SponsorBlock processing",
+            filename=os.path.basename(filename),
+            file_path=filename,
+            download_url=f"/downloads/{os.path.basename(filename)}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading music with SponsorBlock: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/sponsorblock/categories")
+async def get_sponsorblock_categories():
+    """Get available SponsorBlock categories with descriptions"""
+    return {
+        "categories": {
+            "sponsor": {
+                "name": "Sponsor",
+                "description": "Paid promotion, paid referrals and direct advertisements",
+                "color": "#00d400",
+                "recommended_for_music": True
+            },
+            "intro": {
+                "name": "Intermission/Intro Animation", 
+                "description": "An interval without actual content. Could be a pause, static frame, repeating animation",
+                "color": "#00ffff",
+                "recommended_for_music": True
+            },
+            "outro": {
+                "name": "Endcards/Credits",
+                "description": "Information that appears on screen after the main content",
+                "color": "#0202ed",
+                "recommended_for_music": True
+            },
+            "selfpromo": {
+                "name": "Unpaid/Self Promotion",
+                "description": "Self promotion: unpaid, charity, community, etc.",
+                "color": "#ffff00",
+                "recommended_for_music": True
+            },
+            "preview": {
+                "name": "Preview/Recap",
+                "description": "Quick recap of the previous video, or a preview of what's coming up",
+                "color": "#008fd6",
+                "recommended_for_music": False
+            },
+            "filler": {
+                "name": "Filler Tangent/Jokes",
+                "description": "Tangential scenes added only for filler or humor that are not required",
+                "color": "#7300ff",
+                "recommended_for_music": False
+            },
+            "interaction": {
+                "name": "Interaction Reminder",
+                "description": "When there is a short reminder to like, subscribe or interact",
+                "color": "#cc00ff",
+                "recommended_for_music": True
+            },
+            "music_offtopic": {
+                "name": "Non-Music Section",
+                "description": "Only for music videos. This includes introductions or outros in music videos",
+                "color": "#ff9900",
+                "recommended_for_music": True
+            }
+        },
+        "presets": {
+            "music_clean": {
+                "name": "Clean Music",
+                "description": "Perfect for music downloads - removes all non-music content",
+                "remove": ["sponsor", "intro", "outro", "selfpromo", "interaction", "music_offtopic"],
+                "mark": []
+            },
+            "music_minimal": {
+                "name": "Minimal Cleaning",
+                "description": "Only removes obvious promotions and sponsors",
+                "remove": ["sponsor", "selfpromo"],
+                "mark": []
+            },
+            "music_aggressive": {
+                "name": "Aggressive Cleaning",
+                "description": "Removes everything except the core music content",
+                "remove": ["sponsor", "intro", "outro", "selfpromo", "preview", "interaction", "music_offtopic"],
+                "mark": []
+            }
+        }
+    }
 
 @router.get("/quality-presets")
 async def get_audio_quality_presets():

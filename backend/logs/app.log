@@ -5,3 +5,23 @@
 2025-08-10 10:58:17,388 - services.queue_manager - INFO - Queue processing stopped
 2025-08-10 20:17:15,502 - core.downloader - ERROR - Frame download error: Download failed - no info returned
 2025-08-10 20:17:15,503 - api.routes.video - ERROR - Error downloading frame: Frame download failed: Download failed - no info returned
+2025-08-10 20:37:45,191 - core.downloader - INFO - SponsorBlock music download completed: downloads/Aavan_Jaavan_Song_WAR_2_Hrithik_Roshan_Kiara_Advani_Pritam_Arijit_Singh_Nikhita_Amitabh_B.mp3
+2025-08-10 20:37:45,192 - core.downloader - INFO - Removed categories: ['sponsor', 'intro', 'outro', 'selfpromo', 'interaction', 'music_offtopic']
+2025-08-10 20:39:23,409 - core.downloader - INFO - SponsorBlock music download completed: downloads/Luka_Chuppi_-_Duniyaa_Full_Video_Song_Kartik_Aaryan_Kriti_Sanon_Akhil_Dhvani_B.mp3
+2025-08-10 20:39:23,410 - core.downloader - INFO - Removed categories: ['sponsor', 'intro', 'outro', 'selfpromo', 'interaction', 'music_offtopic']
+2025-08-10 20:41:00,454 - core.downloader - INFO - SponsorBlock music download completed: downloads/Luka_Chuppi_-_Duniyaa_Full_Video_Song_Kartik_Aaryan_Kriti_Sanon_Akhil_Dhvani_B.mp3
+2025-08-10 20:41:00,454 - core.downloader - INFO - Removed categories: ['sponsor', 'intro', 'outro', 'selfpromo', 'preview', 'interaction', 'music_offtopic']
+2025-08-10 20:44:08,050 - core.downloader - ERROR - Error extracting video info: Failed to extract video information
+2025-08-10 20:44:08,051 - api.routes.video - ERROR - Error getting video info: Failed to get video information: Failed to extract video information
+2025-08-10 20:44:39,579 - core.downloader - INFO - SponsorBlock music download completed: downloads/Premalo_-_8K_Video_Court_Priyadarshi_Harsh_Roshan_Sridevi_Vijai_Bulganin_Ram_Jagadeesh.mp3
+2025-08-10 20:44:39,579 - core.downloader - INFO - Removed categories: ['sponsor', 'intro', 'outro', 'selfpromo', 'preview', 'interaction', 'music_offtopic']
+2025-08-10 20:46:54,950 - core.downloader - ERROR - Frame download error: Download failed - no info returned
+2025-08-10 20:46:54,952 - api.routes.video - ERROR - Error downloading frame: Frame download failed: Download failed - no info returned
+2025-08-10 20:47:21,602 - core.downloader - ERROR - Frame download error: Download failed - no info returned
+2025-08-10 20:47:21,604 - api.routes.video - ERROR - Error downloading frame: Frame download failed: Download failed - no info returned
+2025-08-10 20:47:45,643 - core.downloader - ERROR - Frame download error: Download failed - no info returned
+2025-08-10 20:47:45,644 - api.routes.video - ERROR - Error downloading frame: Frame download failed: Download failed - no info returned
+2025-08-10 20:47:59,641 - core.downloader - ERROR - Frame download error: Download failed - no info returned
+2025-08-10 20:47:59,643 - api.routes.video - ERROR - Error downloading frame: Frame download failed: Download failed - no info returned
+2025-08-10 20:48:18,825 - core.downloader - ERROR - Frame download error: Download failed - no info returned
+2025-08-10 20:48:18,825 - api.routes.video - ERROR - Error downloading frame: Frame download failed: Download failed - no info returned

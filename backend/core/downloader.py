@@ -17,7 +17,7 @@ import json
 import logging
 
 from core.config import settings
-from core.models import DownloadMode, DownloadStatus, DownloadProgress, VideoInfo, FormatInfo, FrameInfo, PlaylistInfo
+from core.models import DownloadMode, DownloadStatus, DownloadProgress, VideoInfo, FormatInfo, FrameInfo, PlaylistInfo, SponsorBlockMusicRequest
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class AdvancedDownloader:
         self.max_concurrent_downloads = 2  # Limit concurrent downloads
         
     def get_base_options(self) -> Dict[str, Any]:
-        """Get base yt-dlp options with crash prevention"""
+        """Get base yt-dlp options with crash prevention and YouTube compatibility"""
         return {
             'outtmpl': os.path.join(settings.DOWNLOAD_DIR, '%(title).100s.%(ext)s'),
             'restrictfilenames': True,
@@ -58,17 +58,34 @@ class AdvancedDownloader:
             'writeautomaticsub': False,
             'subtitleslangs': ['en'],
             'cachedir': settings.YTDLP_CACHE_DIR,
-            'user_agent': settings.YTDLP_USER_AGENT,
+            # Enhanced user agent and headers for YouTube compatibility
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'http_headers': {
-                'User-Agent': settings.YTDLP_USER_AGENT,
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
                 'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Cache-Control': 'max-age=0',
             },
-            'retries': 3,
-            'fragment_retries': 5,  # Reduced to prevent excessive retries
-            'extractor_retries': 2,  # Reduced to prevent excessive retries
+            'retries': 5,  # Increased retries for YouTube issues
+            'fragment_retries': 10,  # Increased fragment retries
+            'extractor_retries': 3,  # Increased extractor retries
             'socket_timeout': 60,  # Increased timeout for large files
+            # YouTube-specific options to handle new restrictions
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['hls', 'dash'],  # Skip problematic formats
+                    'player_client': ['android', 'web'],  # Use multiple clients
+                    'player_skip': ['configs'],  # Skip config requests
+                }
+            },
             # Video+Audio merging options with crash prevention
             'merge_output_format': 'mp4',
             'prefer_ffmpeg': True,
@@ -87,6 +104,9 @@ class AdvancedDownloader:
             # Memory management
             'concurrent_fragment_downloads': 1,  # Reduce concurrent downloads
             'buffersize': 1024 * 1024,  # 1MB buffer size
+            # Additional YouTube compatibility options
+            'format_sort': ['res', 'ext:mp4:m4a', 'hasaud', 'lang', 'quality'],
+            'format_sort_force': True,
         }
     
     def create_progress_hook(self, download_id: str, callback: Optional[Callable] = None):
@@ -553,6 +573,123 @@ class AdvancedDownloader:
         except Exception as e:
             logger.error(f"Error checking system resources: {e}")
             return True  # Allow download if check fails
+    
+    async def download_music_with_sponsorblock(self, url: str, quality: str = "best", 
+                                             audio_format: str = "mp3", 
+                                             remove_categories: List[str] = None,
+                                             mark_categories: List[str] = None,
+                                             sponsorblock_api: str = "https://sponsor.ajay.app",
+                                             progress_callback: Optional[Callable] = None) -> str:
+        """Download music with SponsorBlock integration to remove unwanted segments"""
+        download_id = str(uuid.uuid4())
+        
+        if remove_categories is None:
+            remove_categories = ["sponsor", "intro", "outro", "selfpromo", "preview", "interaction", "music_offtopic"]
+        
+        if mark_categories is None:
+            mark_categories = []
+        
+        ydl_opts = self.get_base_options()
+        
+        # SponsorBlock configuration
+        sponsorblock_opts = {}
+        
+        if remove_categories:
+            sponsorblock_opts['sponsorblock_remove'] = ','.join(remove_categories)
+            
+        if mark_categories:
+            sponsorblock_opts['sponsorblock_mark'] = ','.join(mark_categories)
+            
+        if sponsorblock_api != "https://sponsor.ajay.app":
+            sponsorblock_opts['sponsorblock_api'] = sponsorblock_api
+        
+        # Audio extraction post-processor
+        postprocessors = [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': audio_format,
+            'preferredquality': quality if quality != 'best' else '320',
+        }]
+        
+        ydl_opts.update({
+            'format': 'bestaudio/best',
+            'postprocessors': postprocessors,
+            'outtmpl': os.path.join(settings.DOWNLOAD_DIR, '%(title).100s.%(ext)s'),
+            'restrictfilenames': True,
+            'windowsfilenames': True,
+            **sponsorblock_opts  # Add SponsorBlock options
+        })
+        ydl_opts['progress_hooks'] = [self.create_progress_hook(download_id, progress_callback)]
+        
+        try:
+            # Check system resources before starting
+            if not self._check_system_resources():
+                raise Exception("Insufficient system resources for download")
+            
+            # Clean up any hanging processes
+            self._cleanup_processes()
+            
+            self.active_downloads[download_id] = {
+                'status': DownloadStatus.DOWNLOADING,
+                'url': url,
+                'type': 'music_sponsorblock',
+                'start_time': time.time()
+            }
+            
+            # Use timeout for the download operation
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = await asyncio.wait_for(
+                        asyncio.get_event_loop().run_in_executor(
+                            None, lambda: ydl.extract_info(url, download=True)
+                        ),
+                        timeout=1800  # 30 minutes timeout
+                    )
+                    
+                    if not info:
+                        raise Exception("Download failed - no info returned")
+                    
+                    # Get the final processed filename
+                    filename = ydl.prepare_filename(info)
+                    base_name = os.path.splitext(filename)[0]
+                    final_filename = f"{base_name}.{audio_format}"
+                    
+                    # Check if processed file exists
+                    if os.path.exists(final_filename):
+                        filename = final_filename
+                    elif os.path.exists(filename):
+                        pass
+                    else:
+                        raise Exception("Processed music file not found after download")
+                    
+                    # Verify file is not corrupted
+                    if os.path.getsize(filename) < 1024:  # Less than 1KB
+                        raise Exception("Downloaded file appears to be corrupted (too small)")
+                    
+                    self.active_downloads[download_id]['status'] = DownloadStatus.COMPLETED
+                    self.active_downloads[download_id]['filename'] = filename
+                    
+                    # Clean up after successful download
+                    self._cleanup_processes()
+                    
+                    logger.info(f"SponsorBlock music download completed: {filename}")
+                    logger.info(f"Removed categories: {remove_categories}")
+                    if mark_categories:
+                        logger.info(f"Marked categories: {mark_categories}")
+                    
+                    return filename
+                    
+            except asyncio.TimeoutError:
+                raise Exception("Download timed out after 30 minutes")
+                
+        except Exception as e:
+            logger.error(f"SponsorBlock music download error: {e}")
+            self.active_downloads[download_id]['status'] = DownloadStatus.FAILED
+            self.active_downloads[download_id]['error'] = str(e)
+            
+            # Clean up on error
+            self._cleanup_processes()
+            
+            raise Exception(f"SponsorBlock music download failed: {str(e)}")
     
     def cancel_download(self, download_id: str) -> bool:
         """Cancel active download and clean up resources"""

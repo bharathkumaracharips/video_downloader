@@ -69,6 +69,26 @@ class FrameDownloadRequest(BaseModel):
     merge_audio: bool = True
     audio_format_id: Optional[str] = None
 
+class MusicDownloadRequest(BaseModel):
+    url: HttpUrl
+    quality: Literal["best", "320", "256", "192", "128"] = "best"
+    format: Literal["mp3", "aac", "flac", "opus", "wav"] = "mp3"
+    trim_start: Optional[int] = None  # seconds to trim from start
+    trim_end: Optional[int] = None    # seconds to trim from end
+    auto_detect_music: bool = True    # automatically detect and trim non-music parts
+    use_sponsorblock: bool = False    # use SponsorBlock to remove segments
+    sponsorblock_categories: List[str] = ["sponsor", "intro", "outro", "selfpromo", "preview", "interaction"]
+    output_template: Optional[str] = None
+
+class SponsorBlockMusicRequest(BaseModel):
+    url: HttpUrl
+    quality: Literal["best", "320", "256", "192", "128"] = "best"
+    format: Literal["mp3", "aac", "flac", "opus", "wav"] = "mp3"
+    remove_categories: List[str] = ["sponsor", "intro", "outro", "selfpromo", "preview", "interaction", "music_offtopic"]
+    mark_categories: List[str] = []  # Categories to mark as chapters instead of removing
+    sponsorblock_api: str = "https://sponsor.ajay.app"
+    output_template: Optional[str] = None
+
 # Response Models
 class FormatInfo(BaseModel):
     format_id: str

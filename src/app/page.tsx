@@ -75,6 +75,20 @@ export default function Home() {
   const [selectedFrame, setSelectedFrame] = useState<string | null>(null);
   const [mergeAudio, setMergeAudio] = useState(true);
 
+  // Music download states
+  const [downloadType, setDownloadType] = useState<"audio" | "music" | "sponsorblock">("sponsorblock");
+  const [trimStart, setTrimStart] = useState<number | null>(null);
+  const [trimEnd, setTrimEnd] = useState<number | null>(null);
+  const [autoDetectMusic, setAutoDetectMusic] = useState(true);
+  const [musicAnalysis, setMusicAnalysis] = useState<any>(null);
+
+  // SponsorBlock states
+  const [sponsorblockPreset, setSponsorblockPreset] = useState("music_clean");
+  const [sponsorblockCategories, setSponsorblockCategories] = useState<any>(null);
+  const [customRemoveCategories, setCustomRemoveCategories] = useState<string[]>([
+    "sponsor", "intro", "outro", "selfpromo", "interaction", "music_offtopic"
+  ]);
+
   // Queue states
   const [downloads, setDownloads] = useState<DownloadProgress[]>([]);
   const [queueStatus, setQueueStatus] = useState<any>(null);
@@ -223,6 +237,122 @@ export default function Home() {
     }
   };
 
+  // Music download functions
+  const downloadMusic = async () => {
+    if (!url) return;
+
+    setLoading(true);
+    setError("");
+    setStatus("");
+
+    try {
+      const res = await fetch(`${API_BASE}/audio/download/music`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url,
+          quality: audioQuality,
+          format: audioFormat,
+          trim_start: trimStart,
+          trim_end: trimEnd,
+          auto_detect_music: autoDetectMusic,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Music download failed");
+      const data = await res.json();
+      setStatus(`Music downloaded successfully: ${data.filename}`);
+
+    } catch (e: any) {
+      setError(e.message || "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const downloadSponsorBlockMusic = async () => {
+    if (!url) return;
+
+    setLoading(true);
+    setError("");
+    setStatus("");
+
+    try {
+      // Get categories based on preset or custom selection
+      let removeCategories = customRemoveCategories;
+      if (sponsorblockCategories && sponsorblockPreset !== "custom") {
+        const preset = sponsorblockCategories.presets[sponsorblockPreset];
+        if (preset) {
+          removeCategories = preset.remove;
+        }
+      }
+
+      const res = await fetch(`${API_BASE}/audio/download/music/sponsorblock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url,
+          quality: audioQuality,
+          format: audioFormat,
+          remove_categories: removeCategories,
+          mark_categories: [],
+          sponsorblock_api: "https://sponsor.ajay.app"
+        }),
+      });
+
+      if (!res.ok) throw new Error("SponsorBlock music download failed");
+      const data = await res.json();
+      setStatus(`Clean music downloaded successfully: ${data.filename}`);
+
+    } catch (e: any) {
+      setError(e.message || "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadSponsorBlockCategories = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/audio/sponsorblock/categories`);
+      if (res.ok) {
+        const data = await res.json();
+        setSponsorblockCategories(data);
+      }
+    } catch (e) {
+      console.error("Failed to load SponsorBlock categories:", e);
+    }
+  };
+
+  const analyzeMusicContent = async () => {
+    if (!url) return;
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/audio/analyze/music`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+
+      if (!res.ok) throw new Error("Analysis failed");
+      const data = await res.json();
+      setMusicAnalysis(data);
+
+      // Auto-apply suggested trims
+      if (data.suggested_trims) {
+        setTrimStart(data.suggested_trims.intro_skip || null);
+        setTrimEnd(data.suggested_trims.outro_skip || null);
+      }
+
+    } catch (e: any) {
+      setError(e.message || "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Playlist functions
   const fetchPlaylistInfo = async () => {
     if (!url) return;
@@ -339,8 +469,9 @@ export default function Home() {
   // Fetch queue status periodically (only after mounting)
   useEffect(() => {
     if (!mounted) return;
-    
+
     fetchQueueStatus();
+    loadSponsorBlockCategories();
     const interval = setInterval(fetchQueueStatus, 2000);
     return () => clearInterval(interval);
   }, [mounted]);
@@ -370,8 +501,8 @@ export default function Home() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <button
           className={`p-4 rounded-lg border-2 transition-all ${mode === "video"
-              ? "border-blue-500 bg-blue-50 text-blue-700"
-              : "border-gray-200 hover:border-gray-300"
+            ? "border-blue-500 bg-blue-50 text-blue-700"
+            : "border-gray-200 hover:border-gray-300"
             }`}
           onClick={() => setMode("video")}
         >
@@ -383,8 +514,8 @@ export default function Home() {
 
         <button
           className={`p-4 rounded-lg border-2 transition-all ${mode === "audio"
-              ? "border-green-500 bg-green-50 text-green-700"
-              : "border-gray-200 hover:border-gray-300"
+            ? "border-green-500 bg-green-50 text-green-700"
+            : "border-gray-200 hover:border-gray-300"
             }`}
           onClick={() => setMode("audio")}
         >
@@ -395,8 +526,8 @@ export default function Home() {
 
         <button
           className={`p-4 rounded-lg border-2 transition-all ${mode === "playlist"
-              ? "border-purple-500 bg-purple-50 text-purple-700"
-              : "border-gray-200 hover:border-gray-300"
+            ? "border-purple-500 bg-purple-50 text-purple-700"
+            : "border-gray-200 hover:border-gray-300"
             }`}
           onClick={() => setMode("playlist")}
         >
@@ -407,8 +538,8 @@ export default function Home() {
 
         <button
           className={`p-4 rounded-lg border-2 transition-all ${mode === "live"
-              ? "border-red-500 bg-red-50 text-red-700"
-              : "border-gray-200 hover:border-gray-300"
+            ? "border-red-500 bg-red-50 text-red-700"
+            : "border-gray-200 hover:border-gray-300"
             }`}
           onClick={() => setMode("live")}
         >
@@ -516,7 +647,7 @@ export default function Home() {
                           </thead>
                           <tbody className="bg-white divide-y divide-gray-200">
                             {videoInfo.frames.map((frame, index) => (
-                              <tr 
+                              <tr
                                 key={frame.format_id}
                                 className={`hover:bg-gray-50 ${selectedFrame === frame.format_id ? 'bg-blue-50 border-blue-200' : ''}`}
                               >
@@ -581,7 +712,7 @@ export default function Home() {
                     <div className="flex items-start gap-2">
                       <div className="text-blue-600 mt-0.5">📋</div>
                       <div className="text-sm text-blue-800">
-                        <strong>Frame Selection:</strong> Choose the exact video quality and format you want. 
+                        <strong>Frame Selection:</strong> Choose the exact video quality and format you want.
                         {mergeAudio ? ' Audio will be automatically merged for the best experience.' : ' Video-only download without audio.'}
                       </div>
                     </div>
@@ -598,7 +729,7 @@ export default function Home() {
 
               {videoInfo && (
                 <div className="mb-6">
-                  <div className="flex gap-4 mb-4">
+                  <div className="flex gap-4 mb-6">
                     {videoInfo.thumbnail && (
                       <img
                         src={videoInfo.thumbnail}
@@ -614,6 +745,107 @@ export default function Home() {
                       </p>
                     </div>
                   </div>
+
+                  {/* Download Type Selection */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Download Type
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        className={`p-3 rounded-lg border-2 transition-all ${downloadType === "sponsorblock"
+                          ? "border-blue-500 bg-blue-50 text-blue-700"
+                          : "border-gray-200 hover:border-gray-300"
+                          }`}
+                        onClick={() => setDownloadType("sponsorblock")}
+                      >
+                        <div className="text-lg mb-1">🎯</div>
+                        <div className="font-medium">SponsorBlock</div>
+                        <div className="text-xs text-gray-600">Auto-remove segments</div>
+                      </button>
+                      <button
+                        className={`p-3 rounded-lg border-2 transition-all ${downloadType === "music"
+                          ? "border-green-500 bg-green-50 text-green-700"
+                          : "border-gray-200 hover:border-gray-300"
+                          }`}
+                        onClick={() => setDownloadType("music")}
+                      >
+                        <div className="text-lg mb-1">🎵</div>
+                        <div className="font-medium">Music</div>
+                        <div className="text-xs text-gray-600">Manual trim</div>
+                      </button>
+                      <button
+                        className={`p-3 rounded-lg border-2 transition-all ${downloadType === "audio"
+                          ? "border-gray-500 bg-gray-50 text-gray-700"
+                          : "border-gray-200 hover:border-gray-300"
+                          }`}
+                        onClick={() => setDownloadType("audio")}
+                      >
+                        <div className="text-lg mb-1">🔊</div>
+                        <div className="font-medium">Full Audio</div>
+                        <div className="text-xs text-gray-600">Complete audio</div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* SponsorBlock Options */}
+                  {downloadType === "sponsorblock" && sponsorblockCategories && (
+                    <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <h4 className="font-medium text-blue-900 mb-3">🎯 SponsorBlock Settings</h4>
+
+                      <div className="mb-3">
+                        <label className="block text-sm font-medium text-blue-800 mb-2">
+                          Cleaning Preset
+                        </label>
+                        <select
+                          className="w-full border border-blue-300 rounded-lg px-3 py-2 text-sm"
+                          value={sponsorblockPreset}
+                          onChange={(e) => setSponsorblockPreset(e.target.value)}
+                        >
+                          {Object.entries(sponsorblockCategories.presets).map(([key, preset]: [string, any]) => (
+                            <option key={key} value={key}>
+                              {preset.name} - {preset.description}
+                            </option>
+                          ))}
+                          <option value="custom">Custom Selection</option>
+                        </select>
+                      </div>
+
+                      {sponsorblockPreset === "custom" && (
+                        <div className="mb-3">
+                          <label className="block text-sm font-medium text-blue-800 mb-2">
+                            Categories to Remove
+                          </label>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            {Object.entries(sponsorblockCategories.categories).map(([key, category]: [string, any]) => (
+                              <label key={key} className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={customRemoveCategories.includes(key)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setCustomRemoveCategories([...customRemoveCategories, key]);
+                                    } else {
+                                      setCustomRemoveCategories(customRemoveCategories.filter(c => c !== key));
+                                    }
+                                  }}
+                                  className="rounded"
+                                />
+                                <span className={category.recommended_for_music ? "text-blue-700" : "text-gray-600"}>
+                                  {category.name}
+                                  {category.recommended_for_music && " ⭐"}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="text-xs text-blue-600">
+                        <strong>How it works:</strong> SponsorBlock uses community-submitted data to automatically identify and remove sponsors, intros, outros, and other non-music segments from videos.
+                      </div>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
@@ -652,12 +884,57 @@ export default function Home() {
                   </div>
 
                   <button
-                    className="w-full bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 disabled:opacity-50"
-                    onClick={downloadAudio}
+                    className={`w-full py-3 rounded-lg disabled:opacity-50 ${downloadType === "sponsorblock"
+                        ? "bg-blue-600 hover:bg-blue-700 text-white"
+                        : downloadType === "music"
+                          ? "bg-green-600 hover:bg-green-700 text-white"
+                          : "bg-gray-600 hover:bg-gray-700 text-white"
+                      }`}
+                    onClick={
+                      downloadType === "sponsorblock"
+                        ? downloadSponsorBlockMusic
+                        : downloadType === "music"
+                          ? downloadMusic
+                          : downloadAudio
+                    }
                     disabled={loading}
                   >
-                    {loading ? "Starting Download..." : "Download Audio"}
+                    {loading ? "Processing..." :
+                      downloadType === "sponsorblock" ? "🎯 Download Clean Music (SponsorBlock)" :
+                        downloadType === "music" ? "🎵 Download Music (Smart Trim)" :
+                          "🔊 Download Full Audio"}
                   </button>
+
+                  {/* Info Box */}
+                  <div className={`mt-4 p-3 rounded-lg border ${downloadType === "sponsorblock" ? "bg-blue-50 border-blue-200" :
+                      downloadType === "music" ? "bg-green-50 border-green-200" :
+                        "bg-gray-50 border-gray-200"
+                    }`}>
+                    <div className="flex items-start gap-2">
+                      <div className="mt-0.5">
+                        {downloadType === "sponsorblock" ? "🎯" :
+                          downloadType === "music" ? "🎵" : "🔊"}
+                      </div>
+                      <div className={`text-sm ${downloadType === "sponsorblock" ? "text-blue-800" :
+                          downloadType === "music" ? "text-green-800" :
+                            "text-gray-800"
+                        }`}>
+                        {downloadType === "sponsorblock" ? (
+                          <>
+                            <strong>SponsorBlock Mode:</strong> Uses community data to automatically remove sponsors, intros, outros, and promotional content. Perfect for clean music downloads.
+                          </>
+                        ) : downloadType === "music" ? (
+                          <>
+                            <strong>Music Mode:</strong> Intelligent trimming to remove channel promotions and non-music content based on video analysis.
+                          </>
+                        ) : (
+                          <>
+                            <strong>Full Audio Mode:</strong> Downloads the complete audio track including any promotions, intros, or outros.
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -803,8 +1080,8 @@ export default function Home() {
                       <p className="text-gray-600">by {liveInfo.uploader}</p>
                       <div className="flex items-center gap-2 mt-2">
                         <span className={`px-2 py-1 rounded-full text-xs font-medium ${liveInfo.is_live
-                            ? "bg-red-100 text-red-800"
-                            : "bg-gray-100 text-gray-800"
+                          ? "bg-red-100 text-red-800"
+                          : "bg-gray-100 text-gray-800"
                           }`}>
                           {liveInfo.is_live ? "🔴 LIVE" : "Not Live"}
                         </span>
@@ -930,14 +1207,14 @@ export default function Home() {
                         )}
                       </div>
                       <span className={`text-xs px-2 py-1 rounded-full ml-2 ${download.status === "completed"
-                          ? "bg-green-100 text-green-800"
-                          : download.status === "failed"
-                            ? "bg-red-100 text-red-800"
-                            : "bg-blue-100 text-blue-800"
+                        ? "bg-green-100 text-green-800"
+                        : download.status === "failed"
+                          ? "bg-red-100 text-red-800"
+                          : "bg-blue-100 text-blue-800"
                         }`}>
-                        {download.status === "completed" ? "✅ Done" : 
-                         download.status === "failed" ? "❌ Failed" :
-                         download.status === "downloading" ? "📥 Downloading" : download.status}
+                        {download.status === "completed" ? "✅ Done" :
+                          download.status === "failed" ? "❌ Failed" :
+                            download.status === "downloading" ? "📥 Downloading" : download.status}
                       </span>
                     </div>
                     {download.progress > 0 && download.status === "downloading" && (
@@ -948,9 +1225,8 @@ export default function Home() {
                         </div>
                         <div className="bg-gray-200 rounded-full h-2">
                           <div
-                            className={`h-2 rounded-full transition-all ${
-                              download.progress > 90 ? "bg-purple-600" : "bg-blue-600"
-                            }`}
+                            className={`h-2 rounded-full transition-all ${download.progress > 90 ? "bg-purple-600" : "bg-blue-600"
+                              }`}
                             style={{ width: `${download.progress}%` }}
                           />
                         </div>
