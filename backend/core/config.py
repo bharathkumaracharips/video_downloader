@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     
     # yt-dlp settings
     YTDLP_CACHE_DIR: str = ".ytdlp_cache"
-    YTDLP_COOKIES_FILE: str = None
+    YTDLP_COOKIES_FILE: str = ""
     YTDLP_USER_AGENT: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     
     # Database settings

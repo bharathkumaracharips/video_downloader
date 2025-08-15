@@ -43,70 +43,26 @@ class AdvancedDownloader:
         self.max_concurrent_downloads = 2  # Limit concurrent downloads
         
     def get_base_options(self) -> Dict[str, Any]:
-        """Get base yt-dlp options with crash prevention and YouTube compatibility"""
+        """Get base yt-dlp options - simplified for better compatibility"""
         return {
             'outtmpl': os.path.join(settings.DOWNLOAD_DIR, '%(title).100s.%(ext)s'),
             'restrictfilenames': True,
             'noplaylist': False,
             'ignoreerrors': True,
             'no_warnings': False,
-            'extractaudio': False,
-            'audioformat': 'mp3',
-            'audioquality': '320',
-            'embed_subs': False,  # Disable by default to avoid clutter
-            'writesubtitles': False,
-            'writeautomaticsub': False,
-            'subtitleslangs': ['en'],
             'cachedir': settings.YTDLP_CACHE_DIR,
-            # Enhanced user agent and headers for YouTube compatibility
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Cache-Control': 'max-age=0',
-            },
-            'retries': 5,  # Increased retries for YouTube issues
-            'fragment_retries': 10,  # Increased fragment retries
-            'extractor_retries': 3,  # Increased extractor retries
-            'socket_timeout': 60,  # Increased timeout for large files
-            # YouTube-specific options to handle new restrictions
-            'extractor_args': {
-                'youtube': {
-                    'skip': ['hls', 'dash'],  # Skip problematic formats
-                    'player_client': ['android', 'web'],  # Use multiple clients
-                    'player_skip': ['configs'],  # Skip config requests
-                }
-            },
-            # Video+Audio merging options with crash prevention
+            # Basic retries
+            'retries': 3,
+            'fragment_retries': 5,
+            'extractor_retries': 2,
+            'socket_timeout': 30,
+            # Video+Audio merging options
             'merge_output_format': 'mp4',
             'prefer_ffmpeg': True,
-            'keepvideo': False,  # Don't keep separate video/audio files after merging
-            # FFmpeg options to prevent crashes
-            'postprocessor_args': {
-                'ffmpeg': [
-                    '-threads', '2',  # Limit CPU threads to prevent overload
-                    '-preset', 'fast',  # Use fast preset to reduce processing time
-                    '-movflags', '+faststart',  # Optimize for streaming
-                    '-avoid_negative_ts', 'make_zero',  # Fix timestamp issues
-                    '-fflags', '+genpts',  # Generate presentation timestamps
-                    '-max_muxing_queue_size', '1024',  # Limit queue size
-                ]
-            },
+            'keepvideo': False,
             # Memory management
-            'concurrent_fragment_downloads': 1,  # Reduce concurrent downloads
+            'concurrent_fragment_downloads': 1,
             'buffersize': 1024 * 1024,  # 1MB buffer size
-            # Additional YouTube compatibility options
-            'format_sort': ['res', 'ext:mp4:m4a', 'hasaud', 'lang', 'quality'],
-            'format_sort_force': True,
         }
     
     def create_progress_hook(self, download_id: str, callback: Optional[Callable] = None):
@@ -151,97 +107,146 @@ class AdvancedDownloader:
         return progress_hook
     
     async def get_video_info(self, url: str) -> VideoInfo:
-        """Extract video information without downloading"""
-        ydl_opts = self.get_base_options()
-        ydl_opts.update({
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-        })
+        """Extract video information without downloading with multiple fallback strategies"""
+        # Try multiple extraction strategies - simplified
+        strategies = [
+            # Strategy 1: Basic extraction
+            {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': False,
+            },
+            # Strategy 2: With android client
+            {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': False,
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android'],
+                    }
+                },
+            },
+            # Strategy 3: With web client
+            {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': False,
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['web'],
+                    }
+                },
+            }
+        ]
+        
+        last_error = None
+        
+        for i, strategy in enumerate(strategies):
+            try:
+                ydl_opts = self.get_base_options()
+                ydl_opts.update(strategy)
+                
+                logger.info(f"Trying extraction strategy {i+1}/3 for URL: {url}")
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: ydl.extract_info(url, download=False)
+                    )
+                    
+                    if not info:
+                        raise Exception("Failed to extract video information")
+                    
+                    logger.info(f"Successfully extracted info using strategy {i+1}")
+                    break
+                    
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Strategy {i+1} failed: {str(e)}")
+                if i < len(strategies) - 1:
+                    continue
+                else:
+                    # All strategies failed
+                    error_msg = f"All extraction strategies failed. Last error: {str(last_error)}"
+                    if "Failed to extract any player response" in str(last_error):
+                        error_msg += "\n\nThis is likely due to YouTube changes. Try updating yt-dlp with: pip install --upgrade yt-dlp"
+                    raise Exception(error_msg)
         
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: ydl.extract_info(url, download=False)
+            # Process formats
+            formats = []
+            frames = []
+            
+            for f in info.get('formats', []):
+                format_info = FormatInfo(
+                    format_id=f.get('format_id', ''),
+                    ext=f.get('ext', ''),
+                    resolution=f.get('resolution'),
+                    fps=f.get('fps'),
+                    vcodec=f.get('vcodec'),
+                    acodec=f.get('acodec'),
+                    filesize=f.get('filesize'),
+                    filesize_approx=f.get('filesize_approx'),
+                    tbr=f.get('tbr'),
+                    vbr=f.get('vbr'),
+                    abr=f.get('abr'),
+                    format_note=f.get('format_note'),
+                    quality=f.get('quality'),
+                    has_video=f.get('vcodec', 'none') != 'none',
+                    has_audio=f.get('acodec', 'none') != 'none'
                 )
+                formats.append(format_info)
                 
-                if not info:
-                    raise Exception("Failed to extract video information")
-                
-                # Process formats
-                formats = []
-                frames = []
-                
-                for f in info.get('formats', []):
-                    format_info = FormatInfo(
-                        format_id=f.get('format_id', ''),
-                        ext=f.get('ext', ''),
-                        resolution=f.get('resolution'),
-                        fps=f.get('fps'),
-                        vcodec=f.get('vcodec'),
-                        acodec=f.get('acodec'),
-                        filesize=f.get('filesize'),
-                        filesize_approx=f.get('filesize_approx'),
-                        tbr=f.get('tbr'),
-                        vbr=f.get('vbr'),
-                        abr=f.get('abr'),
-                        format_note=f.get('format_note'),
-                        quality=f.get('quality'),
-                        has_video=f.get('vcodec', 'none') != 'none',
-                        has_audio=f.get('acodec', 'none') != 'none'
-                    )
-                    formats.append(format_info)
+                # Create frame info for video formats
+                if f.get('vcodec', 'none') != 'none' and f.get('resolution'):
+                    filesize_mb = None
+                    if f.get('filesize'):
+                        filesize_mb = round(f.get('filesize') / (1024 * 1024), 1)
+                    elif f.get('filesize_approx'):
+                        filesize_mb = round(f.get('filesize_approx') / (1024 * 1024), 1)
                     
-                    # Create frame info for video formats
-                    if f.get('vcodec', 'none') != 'none' and f.get('resolution'):
-                        filesize_mb = None
-                        if f.get('filesize'):
-                            filesize_mb = round(f.get('filesize') / (1024 * 1024), 1)
-                        elif f.get('filesize_approx'):
-                            filesize_mb = round(f.get('filesize_approx') / (1024 * 1024), 1)
-                        
-                        # Calculate quality score based on resolution and bitrate
-                        quality_score = 0
-                        if f.get('height'):
-                            quality_score += f.get('height', 0) * 0.1
-                        if f.get('tbr'):
-                            quality_score += f.get('tbr', 0) * 0.01
-                        
-                        frame_info = FrameInfo(
-                            format_id=f.get('format_id', ''),
-                            resolution=f.get('resolution', 'Unknown'),
-                            fps=f.get('fps'),
-                            codec=f.get('vcodec', 'Unknown'),
-                            container=f.get('ext', 'Unknown'),
-                            bitrate=f.get('vbr') or f.get('tbr'),
-                            filesize=f.get('filesize') or f.get('filesize_approx'),
-                            filesize_mb=filesize_mb,
-                            quality_score=quality_score,
-                            has_audio=f.get('acodec', 'none') != 'none',
-                            audio_codec=f.get('acodec') if f.get('acodec', 'none') != 'none' else None,
-                            audio_bitrate=f.get('abr')
-                        )
-                        frames.append(frame_info)
-                
-                # Sort frames by quality score (highest first)
-                frames.sort(key=lambda x: x.quality_score or 0, reverse=True)
-                
-                return VideoInfo(
-                    id=info.get('id', ''),
-                    title=info.get('title', ''),
-                    description=info.get('description'),
-                    uploader=info.get('uploader'),
-                    upload_date=info.get('upload_date'),
-                    duration=info.get('duration'),
-                    view_count=info.get('view_count'),
-                    like_count=info.get('like_count'),
-                    thumbnail=info.get('thumbnail'),
-                    formats=formats,
-                    frames=frames,
-                    subtitles=info.get('subtitles'),
-                    is_live=info.get('is_live', False),
-                    live_status=info.get('live_status')
-                )
+                    # Calculate quality score based on resolution and bitrate
+                    quality_score = 0
+                    if f.get('height'):
+                        quality_score += f.get('height', 0) * 0.1
+                    if f.get('tbr'):
+                        quality_score += f.get('tbr', 0) * 0.01
+                    
+                    frame_info = FrameInfo(
+                        format_id=f.get('format_id', ''),
+                        resolution=f.get('resolution', 'Unknown'),
+                        fps=f.get('fps'),
+                        codec=f.get('vcodec', 'Unknown'),
+                        container=f.get('ext', 'Unknown'),
+                        bitrate=f.get('vbr') or f.get('tbr'),
+                        filesize=f.get('filesize') or f.get('filesize_approx'),
+                        filesize_mb=filesize_mb,
+                        quality_score=quality_score,
+                        has_audio=f.get('acodec', 'none') != 'none',
+                        audio_codec=f.get('acodec') if f.get('acodec', 'none') != 'none' else None,
+                        audio_bitrate=f.get('abr')
+                    )
+                    frames.append(frame_info)
+            
+            # Sort frames by quality score (highest first)
+            frames.sort(key=lambda x: x.quality_score or 0, reverse=True)
+            
+            return VideoInfo(
+                id=info.get('id', ''),
+                title=info.get('title', ''),
+                description=info.get('description'),
+                uploader=info.get('uploader'),
+                upload_date=info.get('upload_date'),
+                duration=info.get('duration'),
+                view_count=info.get('view_count'),
+                like_count=info.get('like_count'),
+                thumbnail=info.get('thumbnail'),
+                formats=formats,
+                frames=frames,
+                subtitles=info.get('subtitles'),
+                is_live=info.get('is_live', False),
+                live_status=info.get('live_status')
+            )
                 
         except Exception as e:
             logger.error(f"Error extracting video info: {e}")
