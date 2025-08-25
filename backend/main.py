@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import uvicorn
 
-from api.routes import video, audio, playlist, live, formats, queue
+from api.routes import video, audio, playlist, live, formats, queue, m3u8, browser_download
 from core.config import settings
 from core.database import init_db
 from core.logger import setup_logging
@@ -50,6 +50,8 @@ app.include_router(playlist.router, prefix="/api/playlist", tags=["playlist"])
 app.include_router(live.router, prefix="/api/live", tags=["live"])
 app.include_router(formats.router, prefix="/api/formats", tags=["formats"])
 app.include_router(queue.router, prefix="/api/queue", tags=["queue"])
+app.include_router(m3u8.router, prefix="/api/m3u8", tags=["m3u8"])
+app.include_router(browser_download.router, prefix="/api/browser", tags=["browser"])
 
 @app.get("/")
 async def root():

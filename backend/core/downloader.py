@@ -43,7 +43,7 @@ class AdvancedDownloader:
         self.max_concurrent_downloads = 2  # Limit concurrent downloads
         
     def get_base_options(self) -> Dict[str, Any]:
-        """Get base yt-dlp options - simplified for better compatibility"""
+        """Get base yt-dlp options with YouTube anti-bot measures"""
         return {
             'outtmpl': os.path.join(settings.DOWNLOAD_DIR, '%(title).100s.%(ext)s'),
             'restrictfilenames': True,
@@ -51,18 +51,34 @@ class AdvancedDownloader:
             'ignoreerrors': True,
             'no_warnings': False,
             'cachedir': settings.YTDLP_CACHE_DIR,
-            # Basic retries
-            'retries': 3,
-            'fragment_retries': 5,
-            'extractor_retries': 2,
-            'socket_timeout': 30,
+            # Enhanced retries for YouTube's restrictions
+            'retries': 5,
+            'fragment_retries': 10,
+            'extractor_retries': 3,
+            'socket_timeout': 60,
             # Video+Audio merging options
             'merge_output_format': 'mp4',
             'prefer_ffmpeg': True,
             'keepvideo': False,
-            # Memory management
+            # Memory management - reduce concurrent downloads to avoid rate limiting
             'concurrent_fragment_downloads': 1,
             'buffersize': 1024 * 1024,  # 1MB buffer size
+            # YouTube-specific anti-bot measures
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'player_skip': ['webpage'],
+                }
+            },
+            # Add user agent and headers to appear more like a real browser
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Accept-Encoding': 'gzip,deflate',
+                'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+                'Connection': 'keep-alive',
+            }
         }
     
     def create_progress_hook(self, download_id: str, callback: Optional[Callable] = None):
@@ -108,15 +124,9 @@ class AdvancedDownloader:
     
     async def get_video_info(self, url: str) -> VideoInfo:
         """Extract video information without downloading with multiple fallback strategies"""
-        # Try multiple extraction strategies - simplified
+        # Try multiple extraction strategies with anti-bot measures
         strategies = [
-            # Strategy 1: Basic extraction
-            {
-                'quiet': True,
-                'no_warnings': True,
-                'extract_flat': False,
-            },
-            # Strategy 2: With android client
+            # Strategy 1: Android client (most reliable for YouTube)
             {
                 'quiet': True,
                 'no_warnings': True,
@@ -124,10 +134,25 @@ class AdvancedDownloader:
                 'extractor_args': {
                     'youtube': {
                         'player_client': ['android'],
+                        'player_skip': ['webpage'],
+                        'skip': ['hls'],  # Skip HLS to avoid fragment issues
                     }
                 },
             },
-            # Strategy 3: With web client
+            # Strategy 2: iOS client (alternative mobile client)
+            {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': False,
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['ios'],
+                        'player_skip': ['webpage'],
+                        'skip': ['hls', 'dash'],
+                    }
+                },
+            },
+            # Strategy 3: Web client with conservative settings
             {
                 'quiet': True,
                 'no_warnings': True,
@@ -135,6 +160,8 @@ class AdvancedDownloader:
                 'extractor_args': {
                     'youtube': {
                         'player_client': ['web'],
+                        'player_skip': ['webpage'],
+                        'skip': ['hls', 'dash'],
                     }
                 },
             }
@@ -339,17 +366,19 @@ class AdvancedDownloader:
             self.active_downloads[download_id]['error'] = str(e)
             raise Exception(f"Download failed: {str(e)}")
     
-    async def download_video_with_merge(self, url: str, quality: str = "best", 
+    async def download_video_with_merge(self, url: str, quality: str = "best",
                                       progress_callback: Optional[Callable] = None) -> str:
         """Download video with automatic video+audio merging for high quality - crash-safe version"""
         download_id = str(uuid.uuid4())
-        
-        # Determine format selector based on quality
+
+        # Determine format selector based on quality with fallbacks
         if quality == "best":
-            format_selector = "bestvideo+bestaudio/best"
+            # Use progressive formats first, then fallback to adaptive
+            format_selector = "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
         elif "height<=" in quality:
             height = quality.split("<=")[1].rstrip("]")
-            format_selector = f"bestvideo[height<={height}]+bestaudio/best[height<={height}]"
+            # Prefer progressive formats to avoid fragment issues
+            format_selector = f"best[height<={height}][ext=mp4]/bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={height}]+bestaudio/best[height<={height}]"
         else:
             format_selector = quality
         

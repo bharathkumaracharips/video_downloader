@@ -54,7 +54,7 @@ interface DownloadProgress {
   error?: string;
 }
 
-type DownloadMode = "video" | "audio" | "playlist" | "live";
+type DownloadMode = "video" | "audio" | "playlist" | "live" | "m3u8";
 
 export default function Home() {
   const [mode, setMode] = useState<DownloadMode>("video");
@@ -103,7 +103,11 @@ export default function Home() {
   const [liveInfo, setLiveInfo] = useState<any>(null);
   const [recordDuration, setRecordDuration] = useState<number | null>(null);
 
-  const API_BASE = "http://127.0.0.1:8000/api";
+  // M3U8 states
+  const [m3u8Filename, setM3u8Filename] = useState("");
+  const [m3u8Progress, setM3u8Progress] = useState<any>(null);
+
+  const API_BASE = "http://localhost:8000/api";
 
   // Fetch video/audio info
   const fetchVideoInfo = async () => {
@@ -114,20 +118,93 @@ export default function Home() {
     setVideoInfo(null);
 
     try {
-      const endpoint = mode === "live" ? "live/info" : "video/info";
-      const res = await fetch(`${API_BASE}/${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-
-      if (!res.ok) throw new Error("Failed to fetch video info");
-      const data = await res.json();
-
       if (mode === "live") {
+        // Use server-side extraction for live streams
+        const res = await fetch(`${API_BASE}/live/info`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+
+        if (!res.ok) throw new Error("Failed to fetch live stream info");
+        const data = await res.json();
         setLiveInfo(data);
       } else {
-        setVideoInfo(data);
+        // Try server-side browser extraction first for regular videos
+        try {
+          // Extract video ID from URL
+          const videoIdMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/);
+
+          if (videoIdMatch) {
+            const videoId = videoIdMatch[1];
+            setStatus("Extracting video info via browser method...");
+
+            const res = await fetch(`${API_BASE}/browser/extract/${videoId}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+            });
+
+            if (res.ok) {
+              const browserInfo = await res.json();
+
+              // Convert browser format to expected format
+              const convertedInfo = {
+                id: browserInfo.id,
+                title: browserInfo.title,
+                duration: browserInfo.duration,
+                uploader: browserInfo.uploader,
+                thumbnail: browserInfo.thumbnail,
+                formats: browserInfo.formats.map((f: any) => ({
+                  format_id: f.format_id,
+                  ext: f.ext,
+                  resolution: f.resolution,
+                  fps: f.fps,
+                  vcodec: f.vcodec,
+                  acodec: f.acodec,
+                  filesize: f.filesize || 0,
+                  has_video: f.has_video,
+                  has_audio: f.has_audio,
+                  format_note: f.format_note
+                })),
+                frames: browserInfo.formats.filter((f: any) => f.has_video).map((f: any) => ({
+                  format_id: f.format_id,
+                  resolution: f.resolution,
+                  fps: f.fps,
+                  codec: f.vcodec,
+                  container: f.ext,
+                  bitrate: 0,
+                  filesize: f.filesize || 0,
+                  filesize_mb: f.filesize ? Math.round(f.filesize / 1024 / 1024) : 0,
+                  quality_score: 0,
+                  has_audio: f.has_audio,
+                  audio_codec: f.acodec,
+                  audio_bitrate: 0
+                })),
+                _browserInfo: browserInfo // Store original browser info
+              };
+
+              setVideoInfo(convertedInfo);
+              setStatus("Video info extracted successfully via browser method!");
+              return;
+            }
+          }
+
+          throw new Error("Browser extraction failed");
+        } catch (browserError) {
+          console.warn("Browser extraction failed, falling back to yt-dlp:", browserError);
+          setStatus("Browser extraction failed, trying yt-dlp...");
+
+          // Fallback to server-side yt-dlp extraction
+          const res = await fetch(`${API_BASE}/video/info`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url }),
+          });
+
+          if (!res.ok) throw new Error("Failed to fetch video info");
+          const data = await res.json();
+          setVideoInfo(data);
+        }
       }
     } catch (e: any) {
       setError(e.message || "Unknown error");
@@ -145,6 +222,7 @@ export default function Home() {
     setStatus("");
 
     try {
+      // Try regular yt-dlp download first
       const res = await fetch(`${API_BASE}/video/download`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -155,7 +233,49 @@ export default function Home() {
         }),
       });
 
-      if (!res.ok) throw new Error("Download failed");
+      if (!res.ok) {
+        // If yt-dlp fails, try browser-assisted download
+        setStatus("yt-dlp failed, trying browser-assisted download...");
+
+        if (videoInfo && (videoInfo as any)._browserInfo) {
+          // Use browser info if available
+          const browserInfo = (videoInfo as any)._browserInfo;
+
+          // Find best format based on selected quality
+          let selectedFormat = browserInfo.formats.find((f: any) =>
+            f.has_video && f.has_audio && f.resolution.includes('720')
+          ) || browserInfo.formats.find((f: any) => f.has_video && f.has_audio);
+
+          if (!selectedFormat) {
+            // Find best video + best audio
+            const videoFormat = browserInfo.formats.find((f: any) => f.has_video && !f.has_audio);
+            const audioFormat = browserInfo.formats.find((f: any) => f.has_audio && !f.has_video);
+
+            if (videoFormat) {
+              const browserRes = await fetch(`${API_BASE}/browser/download`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  video_info: browserInfo,
+                  selected_format_id: videoFormat.format_id,
+                  merge_audio: true,
+                  audio_format_id: audioFormat?.format_id,
+                }),
+              });
+
+              if (browserRes.ok) {
+                const browserData = await browserRes.json();
+                setStatus(`Browser download started: ${browserData.download_id}`);
+                pollBrowserDownloadProgress(browserData.download_id);
+                return;
+              }
+            }
+          }
+        }
+
+        throw new Error("Both yt-dlp and browser download failed");
+      }
+
       const data = await res.json();
       setStatus(`Download started: ${data.download_id}`);
 
@@ -209,32 +329,103 @@ export default function Home() {
   };
 
   const downloadFrame = async () => {
-    if (!url || !selectedFrame) return;
+    if (!url || !selectedFrame || !videoInfo) return;
 
     setLoading(true);
     setError("");
     setStatus("");
 
     try {
-      const res = await fetch(`${API_BASE}/video/download/frame`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url,
-          format_id: selectedFrame,
-          merge_audio: mergeAudio,
-        }),
-      });
+      // Check if we have browser-extracted info
+      if ((videoInfo as any)._browserInfo) {
+        setStatus("Using browser-assisted download...");
 
-      if (!res.ok) throw new Error("Frame download failed");
-      const data = await res.json();
-      setStatus(`Frame downloaded successfully: ${data.filename}`);
+        // Find best audio format if merging is enabled
+        let audioFormatId = null;
+        if (mergeAudio) {
+          const browserInfo = (videoInfo as any)._browserInfo;
+          const audioFormats = browserInfo.formats.filter((f: any) => f.has_audio && !f.has_video);
+          if (audioFormats.length > 0) {
+            // Find best quality audio
+            audioFormatId = audioFormats.reduce((best: any, current: any) => {
+              if (!best) return current;
+              if (current.filesize && best.filesize && current.filesize > best.filesize) {
+                return current;
+              }
+              return best;
+            }).format_id;
+          }
+        }
+
+        const res = await fetch(`${API_BASE}/browser/download`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            video_info: (videoInfo as any)._browserInfo,
+            selected_format_id: selectedFrame,
+            merge_audio: mergeAudio,
+            audio_format_id: audioFormatId,
+          }),
+        });
+
+        if (!res.ok) throw new Error("Browser-assisted download failed");
+        const data = await res.json();
+        setStatus(`Browser download started: ${data.download_id}`);
+
+        // Poll for progress
+        pollBrowserDownloadProgress(data.download_id);
+      } else {
+        // Fallback to original method
+        const res = await fetch(`${API_BASE}/video/download/frame`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url,
+            format_id: selectedFrame,
+            merge_audio: mergeAudio,
+          }),
+        });
+
+        if (!res.ok) throw new Error("Frame download failed");
+        const data = await res.json();
+        setStatus(`Frame downloaded successfully: ${data.filename}`);
+      }
 
     } catch (e: any) {
       setError(e.message || "Unknown error");
     } finally {
       setLoading(false);
     }
+  };
+
+  const pollBrowserDownloadProgress = async (downloadId: string) => {
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/browser/status/${downloadId}`);
+        if (res.ok) {
+          const data = await res.json();
+
+          if (data.status === "completed") {
+            setStatus(`Download completed: ${data.output_file}`);
+            return;
+          } else if (data.status === "failed") {
+            setError(`Download failed: ${data.error}`);
+            return;
+          }
+
+          setStatus(data.message || `Status: ${data.status} (${data.progress}%)`);
+
+          // Continue polling if still in progress
+          if (data.status === "downloading" || data.status === "starting") {
+            setTimeout(poll, 2000);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to poll browser download progress:", e);
+      }
+    };
+
+    poll();
   };
 
   // Music download functions
@@ -442,6 +633,68 @@ export default function Home() {
     }
   };
 
+  // M3U8 functions
+  const downloadM3U8 = async () => {
+    if (!url) return;
+
+    setLoading(true);
+    setError("");
+    setStatus("");
+    setM3u8Progress(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/m3u8/download`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url,
+          filename: m3u8Filename || undefined,
+        }),
+      });
+
+      if (!res.ok) throw new Error("M3U8 download failed");
+      const data = await res.json();
+      setStatus(`M3U8 download started: ${data.download_id}`);
+
+      // Start polling for progress
+      pollM3U8Progress(data.download_id);
+
+    } catch (e: any) {
+      setError(e.message || "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const pollM3U8Progress = async (downloadId: string) => {
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/m3u8/status/${downloadId}`);
+        if (res.ok) {
+          const data = await res.json();
+          setM3u8Progress(data);
+
+          if (data.status === "completed") {
+            setStatus(`M3U8 download completed: ${data.output_file}`);
+            return;
+          } else if (data.status === "failed") {
+            setError(`M3U8 download failed: ${data.error}`);
+            return;
+          }
+
+          // Continue polling if still in progress
+          if (data.status === "downloading" || data.status === "starting") {
+            setTimeout(poll, 2000);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to poll M3U8 progress:", e);
+      }
+    };
+
+    poll();
+  };
+
   // Queue management
   const fetchQueueStatus = async () => {
     try {
@@ -498,7 +751,7 @@ export default function Home() {
       </div>
 
       {/* Mode Selection */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <button
           className={`p-4 rounded-lg border-2 transition-all ${mode === "video"
             ? "border-blue-500 bg-blue-50 text-blue-700"
@@ -547,6 +800,19 @@ export default function Home() {
           <div className="font-semibold">Live</div>
           <div className="text-sm text-gray-600">Record streams</div>
         </button>
+
+        <button
+          className={`p-4 rounded-lg border-2 transition-all ${mode === "m3u8"
+            ? "border-orange-500 bg-orange-50 text-orange-700"
+            : "border-gray-200 hover:border-gray-300"
+            }`}
+          onClick={() => setMode("m3u8")}
+        >
+          <div className="text-2xl mb-2">📺</div>
+          <div className="font-semibold">M3U8</div>
+          <div className="text-sm text-gray-600">HLS streams</div>
+          <div className="text-xs text-orange-600 mt-1">AES-128</div>
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -555,13 +821,13 @@ export default function Home() {
           {/* URL Input */}
           <div className="bg-white rounded-lg shadow-md p-6 mb-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              YouTube URL
+              {mode === "m3u8" ? "M3U8 Stream URL" : "YouTube URL"}
             </label>
             <div className="flex gap-2">
               <input
                 className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 type="text"
-                placeholder="https://www.youtube.com/watch?v=..."
+                placeholder={mode === "m3u8" ? "https://example.com/stream.m3u8" : "https://www.youtube.com/watch?v=..."}
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
               />
@@ -714,6 +980,11 @@ export default function Home() {
                       <div className="text-sm text-blue-800">
                         <strong>Frame Selection:</strong> Choose the exact video quality and format you want.
                         {mergeAudio ? ' Audio will be automatically merged for the best experience.' : ' Video-only download without audio.'}
+                        {(videoInfo as any)?._browserInfo && (
+                          <div className="mt-2 text-green-700 font-medium">
+                            🌐 Using browser-assisted extraction (bypasses YouTube restrictions)
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1134,6 +1405,89 @@ export default function Home() {
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* M3U8 Mode */}
+          {mode === "m3u8" && (
+            <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+              <h2 className="text-xl font-semibold mb-4">M3U8 Stream Download</h2>
+
+              <div className="mb-6">
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Custom Filename (optional)
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                    placeholder="my_video.mp4"
+                    value={m3u8Filename}
+                    onChange={(e) => setM3u8Filename(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Leave empty for auto-generated filename with timestamp
+                  </p>
+                </div>
+
+                <button
+                  className="w-full bg-orange-600 text-white py-3 rounded-lg hover:bg-orange-700 disabled:opacity-50"
+                  onClick={downloadM3U8}
+                  disabled={loading || !url}
+                >
+                  {loading ? "Starting Download..." : "Download M3U8 Stream"}
+                </button>
+
+                {/* Progress Display */}
+                {m3u8Progress && (
+                  <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-sm font-medium text-orange-800">
+                        {m3u8Progress.status === "downloading" ? "📥 Downloading & Decrypting" :
+                         m3u8Progress.status === "starting" ? "🚀 Starting..." :
+                         m3u8Progress.status === "completed" ? "✅ Completed" :
+                         m3u8Progress.status === "failed" ? "❌ Failed" : m3u8Progress.status}
+                      </span>
+                      <span className="text-sm text-orange-600">
+                        {m3u8Progress.progress ? `${m3u8Progress.progress.toFixed(1)}%` : ""}
+                      </span>
+                    </div>
+
+                    {m3u8Progress.progress > 0 && (
+                      <div className="bg-orange-200 rounded-full h-2 mb-2">
+                        <div
+                          className="bg-orange-600 h-2 rounded-full transition-all"
+                          style={{ width: `${m3u8Progress.progress}%` }}
+                        />
+                      </div>
+                    )}
+
+                    {m3u8Progress.message && (
+                      <p className="text-xs text-orange-700 mt-2">
+                        {m3u8Progress.message}
+                      </p>
+                    )}
+
+                    {m3u8Progress.error && (
+                      <p className="text-xs text-red-600 mt-2">
+                        Error: {m3u8Progress.error}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Info Box */}
+                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mt-4">
+                  <div className="flex items-start gap-2">
+                    <div className="text-orange-600 mt-0.5">📺</div>
+                    <div className="text-sm text-orange-800">
+                      <strong>M3U8 Stream Downloader:</strong> Downloads HLS (HTTP Live Streaming) videos with automatic AES-128 decryption support.
+                      Segments are downloaded in parallel, decrypted, and merged into a single MP4 file.
+                      Temporary files are automatically cleaned up after completion.
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>
